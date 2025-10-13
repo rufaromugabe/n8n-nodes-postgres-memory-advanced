@@ -47,6 +47,8 @@ npm install n8n-nodes-postgres-advanced-memory
 
 Store and retrieve chat history in a PostgreSQL database with advanced schema configuration.
 
+![Main Node Configuration](nodes/MemoryPostgresAdvanced/docs/main-node.png)
+
 #### Configuration Options
 
 | Option                      | Type    | Default                  | Description                                                |
@@ -80,6 +82,8 @@ The node automatically creates:
 ## Session Tracking (Thread Management)
 
 Enable session tracking to maintain a separate table with conversation metadata:
+
+![Schema and Session Configuration](nodes/MemoryPostgresAdvanced/docs/Schema%20and%20session%20defination.png)
 
 **Session Table Structure:**
 
