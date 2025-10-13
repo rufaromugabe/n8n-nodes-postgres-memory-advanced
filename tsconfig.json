@@ -25,6 +25,10 @@
 		"credentials/**/*",
 		"nodes/**/*",
 		"nodes/**/*.json",
+		"utils/**/*",
 		"package.json",
 	],
+	"paths": {
+		"@utils/*": ["utils/*"]
+	}
 }
