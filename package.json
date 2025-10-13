@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-postgres-memory-advanced",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "Postgres Memory+ node for n8n with schema support and thread management",
   "keywords": [
     "n8n-community-node-package",
@@ -22,7 +22,6 @@
   "engines": {
     "node": ">=20.15"
   },
-  "main": "index.js",
   "scripts": {
     "build": "npx rimraf dist && tsc && gulp build:icons",
     "dev": "tsc --watch",
@@ -32,7 +31,9 @@
     "prepublishOnly": "npm run build && npm run lint -c .eslintrc.prepublish.js \"nodes/**/*.ts\" \"utils/**/*.ts\" package.json"
   },
   "files": [
-    "dist"
+    "dist/**/*",
+    "!dist/package.json",
+    "!dist/tsconfig.tsbuildinfo"
   ],
   "n8n": {
     "n8nNodesApiVersion": 1,

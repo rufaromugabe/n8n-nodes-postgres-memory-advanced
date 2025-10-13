@@ -15,7 +15,6 @@
 		"preserveConstEnums": true,
 		"esModuleInterop": true,
 		"resolveJsonModule": true,
-		"incremental": true,
 		"declaration": true,
 		"sourceMap": true,
 		"skipLibCheck": true,
@@ -26,7 +25,6 @@
 		"nodes/**/*",
 		"nodes/**/*.json",
 		"utils/**/*",
-		"package.json",
 	],
 	"paths": {
 		"@utils/*": ["utils/*"]
