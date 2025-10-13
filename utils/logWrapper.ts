@@ -191,7 +191,6 @@ export function logWrapper<T extends BaseChatMemory | BaseChatMessageHistory>(
 				}
 			}
 
-			// eslint-disable-next-line @typescript-eslint/no-unsafe-return
 			return (target as any)[prop];
 		},
 	});

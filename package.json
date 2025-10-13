@@ -26,23 +26,17 @@
   "scripts": {
     "build": "npx rimraf dist && tsc && gulp build:icons",
     "dev": "tsc --watch",
-    "format": "prettier nodes credentials --write",
-    "lint": "eslint nodes credentials package.json",
-    "lintfix": "eslint nodes credentials package.json --fix",
-    "prepublishOnly": "npm run build && npm run lint -c .eslintrc.prepublish.js nodes credentials package.json"
+    "format": "prettier \"nodes/**/*.ts\" \"utils/**/*.ts\" --write",
+    "lint": "eslint \"nodes/**/*.ts\" \"utils/**/*.ts\" package.json",
+    "lintfix": "eslint \"nodes/**/*.ts\" \"utils/**/*.ts\" package.json --fix",
+    "prepublishOnly": "npm run build && npm run lint -c .eslintrc.prepublish.js \"nodes/**/*.ts\" \"utils/**/*.ts\" package.json"
   },
   "files": [
     "dist"
   ],
   "n8n": {
     "n8nNodesApiVersion": 1,
-    "credentials": [
-      "dist/credentials/ExampleCredentialsApi.credentials.js",
-      "dist/credentials/HttpBinApi.credentials.js"
-    ],
     "nodes": [
-      "dist/nodes/ExampleNode/ExampleNode.node.js",
-      "dist/nodes/HttpBin/HttpBin.node.js",
       "dist/nodes/MemoryPostgresAdvanced/MemoryPostgresAdvanced.node.js"
     ]
   },
