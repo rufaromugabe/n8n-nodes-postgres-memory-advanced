@@ -334,14 +334,6 @@ To migrate from the standard Postgres Chat Memory node:
 
 - [n8n community nodes documentation](https://docs.n8n.io/integrations/community-nodes/)
 - [LangChain PostgreSQL Memory](https://js.langchain.com/docs/modules/memory/integrations/postgres)
-- [Session Tracking Guide](SESSION_TRACKING.md)
-
-## Version History
-
-- **1.3**: Enhanced stability and error handling
-- **1.2**: Added expression-based session key support
-- **1.1**: Added context window length configuration
-- **1.0**: Initial release with schema support
 
 ## License
 
