@@ -17,7 +17,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/rufarorevmugabe/n8n-nodes-postgres-memory-advanced.git"
+    "url": "https://github.com/rufaroremugabe/n8n-nodes-postgres-memory-advanced.git"
   },
   "engines": {
     "node": ">=20.15"
