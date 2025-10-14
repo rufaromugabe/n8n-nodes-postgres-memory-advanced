@@ -94,10 +94,14 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
 
 ### How It Works
 
-1. **Enable Feature**: Turn on "Enable Semantic Search" in Options
+1. **Enable Feature**: Turn on "Semantic Search" in Options
 2. **Connect Vector Store**: Attach your Vector Store node (the node shape changes automatically!)
-3. **Automatic Embedding**: Messages are embedded using the vector store's internal model
-4. **Smart Retrieval**: Semantically similar messages are retrieved and injected naturally into conversation
+3. **Set Context Window**: Configure your desired context window length (e.g., 10 messages)
+4. **Automatic Embedding**: Messages are embedded using the vector store's internal model (non-blocking)
+5. **Smart Activation**: Semantic search ONLY runs when context window is full
+   - Short conversations: Uses regular memory (instant, no overhead)
+   - Long conversations: Automatically retrieves relevant older messages
+6. **Natural Injection**: Retrieved messages are injected as actual conversation history
 
 ### Setup Example
 
@@ -139,10 +143,12 @@ Human: [current message continues...]
 - 🔍 **Semantic Understanding**: Finds relevant messages even if wording differs
 - 📚 **Long-term Memory**: Retrieves important context from weeks/months ago
 - 🎯 **Context-aware**: Returns surrounding messages for better understanding
-- ⚡ **Lightning Fast**: Non-blocking storage, optimized retrieval
+- ⚡ **Zero Overhead**: No performance impact when context window isn't full
+- 🎯 **Smart Activation**: Only searches when there are older messages beyond recent context
 - 💰 **Token Efficient**: 90% reduction in context overhead
 - 🎨 **Clean UI**: Dynamic node shape based on configuration
 - 🔌 **Simple Setup**: Only need Vector Store (uses its internal embedding model)
+- 🚀 **Instant Detection**: Uses already-loaded messages, no extra database queries
 
 ### Supported Vector Stores
 
@@ -400,12 +406,31 @@ ORDER BY timestamp DESC;
 - **Instant loading** - Direct database query for recent messages
 - **No overhead** - Standard memory node performance
 
-**With Semantic Search:**
+**With Semantic Search (Smart Activation):**
 
-- **Storage is non-blocking** - Messages are embedded in the background
-- **Retrieval adds ~150-800ms** - Depends on vector store speed and message range
+- **Storage is non-blocking** - Messages are embedded in the background, zero impact
+- **Context window not full** - Zero overhead, instant response (uses regular memory only)
+- **Context window full** - Semantic search activates (~150-800ms depending on vector store)
+- **Zero-cost detection** - Uses already-loaded messages, no extra database queries
 - **Token-optimized** - Minimal context overhead (90% reduction vs traditional methods)
-- **Configurable impact** - Adjust Top K and Message Range to balance speed vs context
+
+### Performance Examples
+
+**Example 1: New Conversation (5 messages, window size: 10)**
+
+```
+Query Time: ~50ms (regular memory only)
+Semantic Search: Skipped (window not full)
+Total: ~50ms ⚡
+```
+
+**Example 2: Long Conversation (100 messages, window size: 10)**
+
+```
+Query Time: ~50ms (regular memory) + ~200-500ms (semantic search)
+Semantic Search: Active (retrieves relevant older messages)
+Total: ~250-550ms 📚
+```
 
 ### How It Works
 

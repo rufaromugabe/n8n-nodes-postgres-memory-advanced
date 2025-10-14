@@ -446,6 +446,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 		if (enableSemanticSearch && vectorStore) {
 			this.logger.info('Semantic search is ENABLED - extending memory with semantic retrieval');
 			const originalLoadMemoryVariables = memory.loadMemoryVariables.bind(memory);
+			const contextWindowLength = this.getNode().typeVersion < 1.1 ? Infinity : (kOptions.k as number);
 			
 			memory.loadMemoryVariables = async (values: any) => {
 				this.logger.info(`loadMemoryVariables called with values: ${JSON.stringify(values)}`);
@@ -453,6 +454,20 @@ export class MemoryPostgresAdvanced implements INodeType {
 				// Get regular memory (recent messages)
 				const regularMemory = await originalLoadMemoryVariables(values);
 				this.logger.info(`Regular memory loaded: ${JSON.stringify(regularMemory)}`);
+				
+				// Check if context window is full by looking at loaded messages
+				// If we have fewer messages than the window size, no need for semantic search
+				const loadedMessages = regularMemory.chat_history || [];
+				const loadedCount = Array.isArray(loadedMessages) ? loadedMessages.length : 0;
+				const isWindowFull = loadedCount >= contextWindowLength;
+				
+				this.logger.info(`Loaded messages: ${loadedCount}, Context window: ${contextWindowLength}, Window full: ${isWindowFull}`);
+				
+				// Only perform semantic search if context window is full (meaning there are older messages not in recent context)
+				if (!isWindowFull) {
+					this.logger.info('Context window not full - skipping semantic search for better performance');
+					return regularMemory;
+				}
 				
 				// Perform semantic search if there's an input query
 				const inputText = values.input || values.question || '';
