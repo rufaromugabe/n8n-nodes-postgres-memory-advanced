@@ -135,7 +135,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 		name: 'memoryPostgresAdvanced',
 		icon: 'file:postgresql.svg',
 		group: ['transform'],
-		version: 1,
+		version: 2,
 		description: 'Stores the chat history in Postgres table with schema support.',
 		defaults: {
 			name: 'Postgres Memory+',
@@ -162,7 +162,18 @@ export class MemoryPostgresAdvanced implements INodeType {
 			},
 		},
 
-		inputs: [],
+		inputs: [
+			{
+				displayName: 'Embeddings',
+				type: NodeConnectionTypes.AiEmbedding,
+				required: false,
+			},
+			{
+				displayName: 'Vector Store',
+				type: NodeConnectionTypes.AiVectorStore,
+				required: false,
+			},
+		] as any,
 
 		outputs: [NodeConnectionTypes.AiMemory] as any,
 		outputNames: ['Memory'],
@@ -210,6 +221,37 @@ export class MemoryPostgresAdvanced implements INodeType {
 						displayOptions: {
 							show: {
 								enableSessionTracking: [true],
+							},
+						},
+					},
+					{
+						displayName: 'Enable Semantic Search',
+						name: 'enableSemanticSearch',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to enable semantic search using embeddings and vector store (requires Embeddings and Vector Store inputs to be connected)',
+					},
+					{
+						displayName: 'Top K Results',
+						name: 'topK',
+						type: 'number',
+						default: 3,
+						description: 'Number of semantically similar messages to retrieve',
+						displayOptions: {
+							show: {
+								enableSemanticSearch: [true],
+							},
+						},
+					},
+					{
+						displayName: 'Message Range',
+						name: 'messageRange',
+						type: 'number',
+						default: 2,
+						description: 'Number of messages before and after each match to include for context',
+						displayOptions: {
+							show: {
+								enableSemanticSearch: [true],
 							},
 						},
 					},
@@ -261,9 +303,56 @@ export class MemoryPostgresAdvanced implements INodeType {
 		const options = this.getNodeParameter('options', itemIndex, {}) as {
 			enableSessionTracking?: boolean;
 			sessionsTableName?: string;
+			enableSemanticSearch?: boolean;
+			topK?: number;
+			messageRange?: number;
 		};
 		const enableSessionTracking = options.enableSessionTracking || false;
 		const sessionsTableName = options.sessionsTableName || 'n8n_chat_sessions';
+		const enableSemanticSearch = options.enableSemanticSearch || false;
+		const topK = options.topK || 3;
+		const messageRange = options.messageRange || 2;
+
+		// Get connected nodes for semantic search
+		let embeddings: any = null;
+		let vectorStore: any = null;
+		
+		if (enableSemanticSearch) {
+			this.logger.info('Semantic search enabled - checking for connected inputs...');
+			const embeddingsInput = (await this.getInputConnectionData(NodeConnectionTypes.AiEmbedding, 0)) as any;
+			const vectorStoreInput = (await this.getInputConnectionData(NodeConnectionTypes.AiVectorStore, 0)) as any;
+			
+			this.logger.info(`Embeddings input: ${embeddingsInput ? 'CONNECTED' : 'NOT CONNECTED'}`);
+			this.logger.info(`Vector Store input: ${vectorStoreInput ? 'CONNECTED' : 'NOT CONNECTED'}`);
+			
+			// n8n returns connections as arrays - extract the first element
+			if (embeddingsInput) {
+				// If it's an array, get the first element, otherwise use as-is
+				embeddings = Array.isArray(embeddingsInput) ? embeddingsInput[0] : embeddingsInput;
+				this.logger.info('Embeddings instance obtained');
+				this.logger.info(`Embeddings type: ${typeof embeddings}, constructor: ${embeddings?.constructor?.name}`);
+				if (embeddings && typeof embeddings === 'object') {
+					this.logger.info(`Embeddings methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(embeddings)).join(', ')}`);
+				}
+			}
+			if (vectorStoreInput) {
+				// If it's an array, get the first element, otherwise use as-is
+				vectorStore = Array.isArray(vectorStoreInput) ? vectorStoreInput[0] : vectorStoreInput;
+				this.logger.info('Vector Store instance obtained');
+				this.logger.info(`Vector Store type: ${typeof vectorStore}, constructor: ${vectorStore?.constructor?.name}`);
+				if (vectorStore && typeof vectorStore === 'object') {
+					this.logger.info(`Vector Store methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(vectorStore)).join(', ')}`);
+				}
+			}
+			
+			if (enableSemanticSearch && (!embeddings || !vectorStore)) {
+				throw new Error('Semantic search is enabled but Embeddings or Vector Store input is not connected. Please connect both or disable semantic search.');
+			}
+			
+			this.logger.info('✅ Semantic search fully configured with embeddings and vector store');
+		} else {
+			this.logger.info('Semantic search is DISABLED');
+		}
 
 		// Configure Postgres connection pool using helper function
 		const pool = await configurePostgresPool(credentials);
@@ -302,23 +391,46 @@ export class MemoryPostgresAdvanced implements INodeType {
 			tableName: qualifiedTableName,
 		});
 
-		// Wrap the chat history to track session metadata (non-blocking)
-		if (enableSessionTracking) {
+		// Wrap the chat history to track session metadata and/or semantic search (non-blocking)
+		if (enableSessionTracking || enableSemanticSearch) {
 			const originalAddMessage = pgChatHistory.addMessage.bind(pgChatHistory);
 			pgChatHistory.addMessage = async (message: any) => {
 				// First, add the message to history (primary function - blocking)
 				await originalAddMessage(message);
 				
-				// Then, update session metadata in background (non-blocking - fire and forget)
 				const messageContent = typeof message.content === 'string' 
 					? message.content 
 					: JSON.stringify(message.content);
 				
-				// Fire and forget - don't await, don't block agent response
-				updateSessionMetadata(pool, schemaName, sessionsTableName, sessionId, messageContent)
-					.catch((error) => {
-						this.logger.warn(`Could not update session metadata: ${error.message}`);
-					});
+				// Update session metadata (non-blocking - fire and forget)
+				if (enableSessionTracking) {
+					updateSessionMetadata(pool, schemaName, sessionsTableName, sessionId, messageContent)
+						.catch((error) => {
+							this.logger.warn(`Could not update session metadata: ${error.message}`);
+						});
+				}
+				
+				// Store embedding in vector store (non-blocking - fire and forget)
+				if (enableSemanticSearch && embeddings && vectorStore) {
+					(async () => {
+						try {
+							// Store in vector store with metadata using LangChain VectorStore API
+							// The vector store will handle embedding generation internally
+							await vectorStore.addDocuments([
+								{
+									pageContent: messageContent,
+									metadata: {
+										sessionId,
+										messageType: message._getType(),
+										timestamp: new Date().toISOString(),
+									}
+								}
+							]);
+						} catch (error: any) {
+							this.logger.warn(`Could not store message embedding: ${error.message}`);
+						}
+					})();
+				}
 			};
 		}
 
@@ -336,6 +448,135 @@ export class MemoryPostgresAdvanced implements INodeType {
 			outputKey: 'output',
 			...kOptions,
 		});
+
+		// Extend memory with semantic search if enabled
+		if (enableSemanticSearch && embeddings && vectorStore) {
+			this.logger.info('Semantic search is ENABLED - extending memory with semantic retrieval');
+			const originalLoadMemoryVariables = memory.loadMemoryVariables.bind(memory);
+			
+			memory.loadMemoryVariables = async (values: any) => {
+				this.logger.info(`loadMemoryVariables called with values: ${JSON.stringify(values)}`);
+				
+				// Get regular memory (recent messages)
+				const regularMemory = await originalLoadMemoryVariables(values);
+				this.logger.info(`Regular memory loaded: ${JSON.stringify(regularMemory)}`);
+				
+				// Perform semantic search if there's an input query
+				const inputText = values.input || values.question || '';
+				this.logger.info(`Input text for semantic search: "${inputText}"`);
+				
+				if (inputText && typeof inputText === 'string') {
+					try {
+						// Generate embedding for the query
+						const queryEmbedding = await embeddings.embedQuery(inputText);
+						
+						// Search for similar messages in this session
+						// Note: MemoryVectorStore doesn't support filtering, so we search all and filter results
+						const allResults = await vectorStore.similaritySearchVectorWithScore(
+							queryEmbedding,
+							topK * 3 // Get more results to filter by session
+						);
+						
+						// Filter results by sessionId and take top K
+						const results = allResults
+							.filter((result: any) => result[0].metadata?.sessionId === sessionId)
+							.slice(0, topK);
+						
+						// Log semantic search results for debugging
+						this.logger.info(`Semantic search found ${results.length} similar messages (from ${allResults.length} total)`);
+						if (results.length > 0) {
+							this.logger.info(`Top match: "${results[0][0].pageContent.substring(0, 50)}..." (score: ${results[0][1]})`);
+						}
+						
+						// Retrieve context messages if messageRange is set
+						if (results.length > 0 && messageRange > 0) {
+							// Get all messages from chat history to find context
+							const allMessages = await pgChatHistory.getMessages();
+							
+							// Build enriched context with surrounding messages
+							const enrichedContexts: string[] = [];
+							
+							for (const result of results) {
+								const matchedContent = result[0].pageContent;
+								const score = result[1];
+								
+								// Find the index of this message in the full history
+								const matchIndex = allMessages.findIndex(
+									(msg: any) => {
+										const content = typeof msg.content === 'string' 
+											? msg.content 
+											: JSON.stringify(msg.content);
+										return content === matchedContent;
+									}
+								);
+								
+								if (matchIndex !== -1) {
+									// Calculate the range boundaries
+									const startIdx = Math.max(0, matchIndex - messageRange);
+									const endIdx = Math.min(allMessages.length - 1, matchIndex + messageRange);
+									
+									// Extract context messages
+									const contextMessages = allMessages.slice(startIdx, endIdx + 1);
+									const contextText = contextMessages.map((msg: any, idx: number) => {
+										const content = typeof msg.content === 'string' 
+											? msg.content 
+											: JSON.stringify(msg.content);
+										const role = msg._getType ? msg._getType() : 'unknown';
+										const marker = (startIdx + idx) === matchIndex ? '→ ' : '  ';
+										return `${marker}[${role}]: ${content}`;
+									}).join('\n');
+									
+									enrichedContexts.push(
+										`[Relevant context (score: ${score.toFixed(3)})]:\n${contextText}`
+									);
+								} else {
+									// Fallback if message not found in history
+									enrichedContexts.push(`[Relevant context]: ${matchedContent}`);
+								}
+							}
+							
+							const semanticContext = enrichedContexts.join('\n\n---\n\n');
+							this.logger.info(`Generated enriched semantic context: ${semanticContext.substring(0, 200)}...`);
+							
+							// Inject semantic context as a system message at the beginning
+							if (regularMemory.chat_history && Array.isArray(regularMemory.chat_history)) {
+								const { SystemMessage } = await import('@langchain/core/messages');
+								const contextMessage = new SystemMessage(
+									`RELEVANT CONTEXT FROM PAST CONVERSATIONS:\n\n${semanticContext}\n\nUse this context to inform your response.`
+								);
+								regularMemory.chat_history.unshift(contextMessage);
+								this.logger.info('✅ Semantic context injected as system message');
+							}
+						} else if (results.length > 0) {
+							// No message range, just return the matched messages
+							const semanticContext = results
+								.map((result: any) => `[Relevant context]: ${result[0].pageContent}`)
+								.join('\n');
+							
+							this.logger.info(`Generated simple semantic context: ${semanticContext.substring(0, 200)}...`);
+							
+							// Inject semantic context as a system message at the beginning
+							if (regularMemory.chat_history && Array.isArray(regularMemory.chat_history)) {
+								const { SystemMessage } = await import('@langchain/core/messages');
+								const contextMessage = new SystemMessage(
+									`RELEVANT CONTEXT FROM PAST CONVERSATIONS:\n\n${semanticContext}\n\nUse this context to inform your response.`
+								);
+								regularMemory.chat_history.unshift(contextMessage);
+								this.logger.info('✅ Semantic context injected as system message');
+							}
+						} else {
+							this.logger.info('No semantic results found - skipping context injection');
+						}
+					} catch (error: any) {
+						this.logger.warn(`Semantic search failed: ${error.message}`);
+					}
+				} else {
+					this.logger.info('No input text provided - skipping semantic search');
+				}
+				
+				return regularMemory;
+			};
+		}
 
 		return {
 			response: logWrapper(memory, this),

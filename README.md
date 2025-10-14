@@ -16,6 +16,7 @@ This is an n8n community node that provides advanced PostgreSQL chat memory func
 ✅ **Context Window** - Configure the number of previous messages to retain  
 ✅ **Session Management** - Flexible session ID management with expression support  
 ✅ **SSL/TLS Support** - Full SSL/TLS connection support  
+✅ **Semantic Search** - Optional RAG-based memory retrieval using embeddings and vector stores (NEW!)  
 ✅ **Multi-version** - Supports versions 1.0, 1.1, 1.2, and 1.3
 
 ## Screenshots
@@ -71,6 +72,59 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
 | **Context Window Length**   | number  | `5`                      | Number of previous messages to retain (v1.1+)              |
 | **Enable Session Tracking** | boolean | `false`                  | Track sessions in separate table for thread management     |
 | **Sessions Table Name**     | string  | `n8n_chat_sessions`      | Table name for session metadata (when tracking is enabled) |
+| **Enable Semantic Search**  | boolean | `false`                  | Enable RAG-based memory retrieval using embeddings (NEW!)  |
+| **Top K Results**           | number  | `3`                      | Number of semantically similar messages to retrieve        |
+| **Message Range**           | number  | `2`                      | Context messages before/after each semantic match          |
+
+## Semantic Search (NEW!)
+
+Enable advanced RAG-based memory retrieval by connecting embedding and vector store nodes:
+
+### How It Works
+
+1. **Connect Inputs**: Attach Embeddings and Vector Store nodes to the memory node
+2. **Enable Feature**: Turn on "Enable Semantic Search" in Options
+3. **Automatic Embedding**: Messages are automatically embedded and stored in your vector database
+4. **Smart Retrieval**: When the agent needs context, it finds semantically similar messages
+
+### Setup Example
+
+```
+┌─────────────────┐
+│ Embeddings      │──┐
+│ (OpenAI, etc.)  │  │
+└─────────────────┘  │
+                     ├──> ┌──────────────────────┐
+┌─────────────────┐  │    │ Postgres Memory+     │──> AI Agent
+│ Vector Store    │──┘    │ (Semantic Search ON) │
+│ (pgvector, etc.)│       └──────────────────────┘
+└─────────────────┘
+```
+
+### Configuration
+
+| Option            | Description                                              |
+| ----------------- | -------------------------------------------------------- |
+| **Top K Results** | Number of similar past messages to retrieve (default: 3) |
+| **Message Range** | Include N messages before/after each match (default: 2)  |
+
+### Benefits
+
+- 🔍 **Semantic Understanding**: Finds relevant messages even if wording differs
+- 📚 **Long-term Memory**: Retrieves important context from weeks/months ago
+- 🎯 **Context-aware**: Returns surrounding messages for better understanding
+- 🔌 **Flexible**: Works with any n8n-compatible embeddings & vector stores
+
+### Supported Vector Stores
+
+Works with any n8n vector store node:
+
+- Postgres with pgvector
+- Pinecone
+- Qdrant
+- Supabase
+- Chroma
+- And more!
 
 ## Auto-Creation Features
 
