@@ -135,7 +135,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 		name: 'memoryPostgresAdvanced',
 		icon: 'file:postgresql.svg',
 		group: ['transform'],
-		version: [1, 1.1, 1.2, 1.3],
+		version: 1,
 		description: 'Stores the chat history in Postgres table with schema support.',
 		defaults: {
 			name: 'Postgres Memory+',

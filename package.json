@@ -36,10 +36,10 @@
     "!dist/tsconfig.tsbuildinfo"
   ],
   "n8n": {
-    "n8nNodesApiVersion": "1",
-    "nodes": [
+  "n8nNodesApiVersion": 1,
+  "nodes": [
       "dist/nodes/MemoryPostgresAdvanced/MemoryPostgresAdvanced.node.js"
-    ]
+]
   },
   "devDependencies": {
     "@typescript-eslint/parser": "~8.32.0",
