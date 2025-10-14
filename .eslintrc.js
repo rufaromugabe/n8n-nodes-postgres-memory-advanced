@@ -23,6 +23,9 @@ module.exports = {
 	overrides: [
 		{
 			files: ['package.json'],
+			parserOptions: {
+				project: null,
+			},
 			plugins: ['eslint-plugin-n8n-nodes-base'],
 			extends: ['plugin:n8n-nodes-base/community'],
 			rules: {

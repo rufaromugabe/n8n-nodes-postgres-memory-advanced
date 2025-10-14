@@ -18,6 +18,16 @@ This is an n8n community node that provides advanced PostgreSQL chat memory func
 ✅ **SSL/TLS Support** - Full SSL/TLS connection support  
 ✅ **Multi-version** - Supports versions 1.0, 1.1, 1.2, and 1.3
 
+## Screenshots
+
+### Main Configuration
+
+![Main Node Configuration](nodes/MemoryPostgresAdvanced/docs/main-node.png)
+
+### Schema and Session Setup
+
+![Schema and Session Configuration](nodes/MemoryPostgresAdvanced/docs/Schema%20and%20session%20defination.png)
+
 ## Installation
 
 Follow the [installation guide](https://docs.n8n.io/integrations/community-nodes/installation/) in the n8n community nodes documentation.
@@ -46,6 +56,8 @@ npm install n8n-nodes-postgres-advanced-memory
 ### Postgres Memory+
 
 Store and retrieve chat history in a PostgreSQL database with advanced schema configuration.
+
+#### Main Configuration
 
 ![Main Node Configuration](nodes/MemoryPostgresAdvanced/docs/main-node.png)
 
@@ -83,6 +95,8 @@ The node automatically creates:
 
 Enable session tracking to maintain a separate table with conversation metadata:
 
+#### Schema and Session Configuration
+
 ![Schema and Session Configuration](nodes/MemoryPostgresAdvanced/docs/Schema%20and%20session%20defination.png)
 
 **Session Table Structure:**
@@ -117,6 +131,22 @@ This node uses the standard **n8n PostgreSQL credentials**. Configure:
 - **User**: Database username
 - **Password**: Database password
 - **SSL Options**: Optional SSL/TLS configuration
+
+## Visual Guide
+
+### Node Configuration Examples
+
+#### Basic Setup
+
+The main node configuration allows you to specify schema, table name, and session settings:
+
+![Main Node Configuration](nodes/MemoryPostgresAdvanced/docs/main-node.png)
+
+#### Advanced Setup with Session Tracking
+
+Configure schema isolation and enable session tracking for thread management:
+
+![Schema and Session Configuration](nodes/MemoryPostgresAdvanced/docs/Schema%20and%20session%20defination.png)
 
 ## Usage
 
