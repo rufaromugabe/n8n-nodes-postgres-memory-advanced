@@ -1,13 +1,18 @@
 {
   "name": "n8n-nodes-postgres-advanced-memory",
-  "version": "1.2.3",
-  "description": "Postgres Memory+ node for n8n with schema support and thread management",
+  "version": "2.0.0",
+  "description": "Postgres Memory+ node for n8n with schema support, thread management, and optimized semantic search",
   "keywords": [
     "n8n-community-node-package",
     "n8n",
     "postgres",
     "memory",
-    "advanced"
+    "advanced",
+    "semantic-search",
+    "rag",
+    "vector-store",
+    "embeddings",
+    "ai"
   ],
   "license": "MIT",
   "homepage": "",
