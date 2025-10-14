@@ -1,5 +1,5 @@
 {
-  "name": "n8n-nodes-postgres-memory-advanced",
+  "name": "n8n-nodes-postgres-advanced-memory",
   "version": "1.1.9",
   "description": "Postgres Memory+ node for n8n with schema support and thread management",
   "keywords": [
