@@ -9,7 +9,7 @@ import type {
 	ICredentialTestFunctions,
 	ICredentialsDecrypted,
 } from 'n8n-workflow';
-import { NodeConnectionTypes } from 'n8n-workflow';
+import { NodeConnectionTypes, NodeOperationError } from 'n8n-workflow';
 import pg from 'pg';
 
 import { getSessionId } from '../../utils/helpers';
@@ -211,7 +211,26 @@ export class MemoryPostgresAdvanced implements INodeType {
 				default: {},
 				options: [
 					{
-						displayName: 'Enable Session Tracking',
+						displayName: 'Message Range',
+						name: 'messageRange',
+						type: 'number',
+						default: 2,
+						description: 'Number of messages before and after each match to include for context',
+						displayOptions: {
+							show: {
+								enableSemanticSearch: [true],
+							},
+						},
+					},
+					{
+						displayName: 'Semantic Search',
+						name: 'enableSemanticSearch',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to enable semantic search using embeddings and vector store (requires Vector Store input to be connected)',
+					},
+					{
+						displayName: 'Session Tracking',
 						name: 'enableSessionTracking',
 						type: 'boolean',
 						default: false,
@@ -230,30 +249,11 @@ export class MemoryPostgresAdvanced implements INodeType {
 						},
 					},
 					{
-						displayName: 'Enable Semantic Search',
-						name: 'enableSemanticSearch',
-						type: 'boolean',
-						default: false,
-						description: 'Whether to enable semantic search using embeddings and vector store (requires Embeddings and Vector Store inputs to be connected)',
-					},
-					{
 						displayName: 'Top K Results',
 						name: 'topK',
 						type: 'number',
 						default: 3,
 						description: 'Number of semantically similar messages to retrieve',
-						displayOptions: {
-							show: {
-								enableSemanticSearch: [true],
-							},
-						},
-					},
-					{
-						displayName: 'Message Range',
-						name: 'messageRange',
-						type: 'number',
-						default: 2,
-						description: 'Number of messages before and after each match to include for context',
 						displayOptions: {
 							show: {
 								enableSemanticSearch: [true],
@@ -329,7 +329,10 @@ export class MemoryPostgresAdvanced implements INodeType {
 			
 			// Validate that vector store is connected when semantic search is enabled
 			if (!vectorStoreInput) {
-				throw new Error('Semantic search is enabled but Vector Store input is not connected. Please connect a Vector Store or disable semantic search.');
+				throw new NodeOperationError(
+					this.getNode(),
+					'Semantic search is enabled but Vector Store input is not connected. Please connect a Vector Store or disable semantic search.'
+				);
 			}
 			
 			// Extract vector store
