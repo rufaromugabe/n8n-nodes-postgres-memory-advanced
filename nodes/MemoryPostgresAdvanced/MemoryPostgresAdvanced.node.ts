@@ -117,15 +117,16 @@ async function updateSessionMetadata(
 	// Generate title from first 50 characters of the first message (if new session)
 	const title = lastMessage.substring(0, 50) + (lastMessage.length > 50 ? '...' : '');
 	
-	// Initialize metadata with working memory template if provided
+	// Initialize metadata with working memory template ONLY on new sessions
 	const metadata = workingMemoryTemplate ? { workingMemory: workingMemoryTemplate } : {};
 	
+	// Optimized query: only update essential fields on conflict (skip metadata updates for performance)
 	const upsertQuery = `
 		INSERT INTO ${qualifiedTableName} (id, title, last_message, timestamp, message_count, metadata)
 		VALUES ($1, $2, $3, NOW(), 1, $4)
 		ON CONFLICT (id) 
 		DO UPDATE SET 
-			last_message = $3,
+			last_message = EXCLUDED.last_message,
 			timestamp = NOW(),
 			message_count = ${qualifiedTableName}.message_count + 1,
 			updated_at = NOW()
@@ -135,6 +136,7 @@ async function updateSessionMetadata(
 }
 
 // Helper function to get working memory for a session
+// Optimized: Uses primary key index, extracts only needed JSON field
 async function getWorkingMemory(
 	pool: pg.Pool,
 	schemaName: string,
@@ -143,10 +145,12 @@ async function getWorkingMemory(
 ): Promise<string | null> {
 	const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}"` : `"${tableName}"`;
 	
+	// Optimized query: Primary key lookup (fast), extracts only workingMemory field from JSONB
 	const query = `
 		SELECT metadata->>'workingMemory' as working_memory
 		FROM ${qualifiedTableName}
 		WHERE id = $1
+		LIMIT 1
 	`;
 	
 	const result = await pool.query(query, [sessionId]);
@@ -154,6 +158,7 @@ async function getWorkingMemory(
 }
 
 // Helper function to update working memory for a session
+// Optimized: Primary key lookup, efficient JSONB update
 async function updateWorkingMemory(
 	pool: pg.Pool,
 	schemaName: string,
@@ -163,6 +168,7 @@ async function updateWorkingMemory(
 ): Promise<void> {
 	const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}"` : `"${tableName}"`;
 	
+	// Optimized query: Primary key update (fast), only touches metadata JSONB field
 	const query = `
 		UPDATE ${qualifiedTableName}
 		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{workingMemory}', $2::jsonb, true),
@@ -292,7 +298,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 						name: 'enableSessionTracking',
 						type: 'boolean',
 						default: false,
-						description: 'Whether to track sessions in a separate table for easy loading as threads',
+						description: 'Whether to track sessions in a separate table for easy loading as threads. NOTE: This is purely for UI purposes (sessions list). Disable if not needed to improve performance. Working Memory requires this to be enabled.',
 					},
 					{
 						displayName: 'Sessions Table Name',
@@ -505,7 +511,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 						messageContent = messageContent.replace(/<working_memory>([^]*?)<\/working_memory>/g, '').trim();
 						message.content = messageContent;
 						
-						// Update working memory in database (non-blocking)
+						// Update working memory in database (non-blocking - fire and forget)
 						updateWorkingMemory(pool, schemaName, sessionsTableName, sessionId, workingMemoryUpdate)
 							.then(() => {
 								this.logger.info('✅ Working memory updated successfully');
@@ -520,12 +526,17 @@ export class MemoryPostgresAdvanced implements INodeType {
 				await originalAddMessage(message);
 				
 				// Update session metadata (non-blocking - fire and forget)
+				// NOTE: This is purely for UI/tracking purposes (sessions list with titles, timestamps).
+				// It does NOT affect memory functionality. Disable "Session Tracking" if not needed.
 				if (enableSessionTracking) {
-					updateSessionMetadata(pool, schemaName, sessionsTableName, sessionId, messageContent, 
-						enableWorkingMemory ? workingMemoryTemplate : undefined)
-						.catch((error) => {
-							this.logger.warn(`Could not update session metadata: ${error.message}`);
-						});
+					// Use setImmediate to defer execution and avoid any blocking
+					setImmediate(() => {
+						updateSessionMetadata(pool, schemaName, sessionsTableName, sessionId, messageContent, 
+							enableWorkingMemory ? workingMemoryTemplate : undefined)
+							.catch((error) => {
+								this.logger.warn(`Could not update session metadata: ${error.message}`);
+							});
+					});
 				}
 				
 				// Store embedding in vector store (non-blocking - fire and forget)
@@ -574,16 +585,28 @@ export class MemoryPostgresAdvanced implements INodeType {
 			memory.loadMemoryVariables = async (values: any) => {
 				this.logger.info(`loadMemoryVariables called with values: ${JSON.stringify(values)}`);
 				
-				// Get regular memory (recent messages)
-				const regularMemory = await originalLoadMemoryVariables(values);
-				this.logger.info(`Regular memory loaded: ${JSON.stringify(regularMemory)}`);
+				// ⚡ PERFORMANCE OPTIMIZATION: Load chat history and working memory in parallel
+				const loadPromises: Promise<any>[] = [
+					originalLoadMemoryVariables(values), // Load chat history
+				];
+				
+				// Add working memory fetch to parallel batch if enabled
+				if (enableWorkingMemory && enableSessionTracking) {
+					loadPromises.push(
+						getWorkingMemory(pool, schemaName, sessionsTableName, sessionId)
+					);
+				}
+				
+				// Execute all queries in parallel (huge performance boost!)
+				const results = await Promise.all(loadPromises);
+				const regularMemory = results[0];
+				const workingMemory = enableWorkingMemory && enableSessionTracking ? results[1] : null;
+				
+				this.logger.info(`✅ Parallel load complete - Chat history and working memory loaded simultaneously`);
 				
 				// Inject working memory at the beginning (if enabled and session tracking is enabled)
 				if (enableWorkingMemory && enableSessionTracking && regularMemory.chat_history && Array.isArray(regularMemory.chat_history)) {
 					try {
-						// Fetch working memory from sessions table
-						const workingMemory = await getWorkingMemory(pool, schemaName, sessionsTableName, sessionId);
-						
 						// Use template if no existing working memory
 						const workingMemoryData = workingMemory || workingMemoryTemplate;
 						
