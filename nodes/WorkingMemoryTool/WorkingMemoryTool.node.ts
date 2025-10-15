@@ -4,6 +4,7 @@ import type {
 	INodeType,
 	INodeTypeDescription,
 } from 'n8n-workflow';
+import { NodeOperationError } from 'n8n-workflow';
 import pg from 'pg';
 
 // Postgres credentials interface matching n8n's built-in type
@@ -113,7 +114,7 @@ export class WorkingMemoryTool implements INodeType {
 		},
 		credentials: [
 			{
-				name: 'postgres',
+				name: 'postgresApi',
 				required: true,
 			},
 		],
@@ -203,7 +204,7 @@ export class WorkingMemoryTool implements INodeType {
 
 				// Validate working memory content
 				if (!workingMemoryContent) {
-					throw new Error('Working memory content is required');
+					throw new NodeOperationError(this.getNode(), 'Working memory content is required');
 				}
 
 				// Fire and forget - update in background
