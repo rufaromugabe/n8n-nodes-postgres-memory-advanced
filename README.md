@@ -13,8 +13,8 @@ This is an n8n community node that provides advanced PostgreSQL chat memory func
 ✅ **Schema Support** - Organize chat histories across different PostgreSQL schemas  
 ✅ **Auto Schema & Table Creation** - Automatically creates schemas and tables if they don't exist  
 ✅ **Session Tracking** - Optional thread management with metadata table for conversation lists  
-✅ **Working Memory** - Mastra-like persistent user information across conversations  
-✅ **Working Memory Tool** - Explicit tool-based memory updates for transparency  
+✅ **Working Memory** - Persistent user information across conversations (requires manual tool setup)  
+✅ **Working Memory Tool** - Dedicated node for explicit memory updates (**must be manually connected**)  
 ✅ **Context Window** - Configure the number of previous messages to retain  
 ✅ **Session Management** - Flexible session ID management with expression support  
 ✅ **SSL/TLS Support** - Full SSL/TLS connection support  
@@ -22,6 +22,16 @@ This is an n8n community node that provides advanced PostgreSQL chat memory func
 ✅ **Token Optimization** - Minimal-token semantic context injection for efficient AI responses  
 ✅ **Performance Optimized** - Parallel query loading and optimized database operations (NEW!)  
 ✅ **Multi-version** - Supports versions 1.0, 1.1, 1.2, and 2.0
+
+## 🚨 Working Memory Setup Required
+
+> **If you enable Working Memory, you MUST manually add the Working Memory Tool node:**
+>
+> 1. Add **"Working Memory Tool"** node to your workflow
+> 2. Connect it to your **AI Agent** as a tool input
+> 3. Use same **Postgres credentials** and **session settings**
+>
+> See [Working Memory Tool Setup](#working-memory-tool-new) for detailed instructions.
 
 ## Screenshots
 
@@ -233,6 +243,8 @@ The node automatically creates:
 
 ## Working Memory (NEW!)
 
+> **⚠️ IMPORTANT:** Working Memory requires the **Working Memory Tool** node to be **manually added and connected** to your AI Agent. See [Working Memory Tool Setup](#working-memory-tool-new) below for configuration instructions.
+
 Inspired by Mastra's working memory system, this feature allows agents to maintain persistent, structured information about users across conversations.
 
 ### 🧠 What is Working Memory?
@@ -248,10 +260,40 @@ Working memory is like the agent's scratchpad - it stores long-term user informa
 ### How It Works
 
 1. **Enable Feature**: Turn on "Working Memory" in Options (requires Session Tracking)
-2. **Customize Template**: Define the structure of information you want to track
-3. **Automatic Injection**: Working memory is injected at the start of every conversation
-4. **Agent Updates**: Agents can update working memory by using special markers
-5. **Non-Blocking**: All operations are asynchronous to ensure no performance impact
+2. **Add Tool Node**: Manually add **Working Memory Tool** node and connect to AI Agent
+3. **Customize Template**: Define the structure of information you want to track
+4. **Automatic Injection**: Working memory is injected at the start of every conversation
+5. **Agent Updates**: Agent uses the Working Memory Tool to update persistent information
+6. **Non-Blocking**: All operations are asynchronous to ensure no performance impact
+
+### Complete Workflow Setup
+
+```
+┌─────────────────────┐
+│  Chat Trigger       │
+│  (Webhook/Chat)     │
+└──────────┬──────────┘
+           │
+           ↓
+┌─────────────────────┐       ┌──────────────────────┐
+│ Postgres Memory+    │       │ Working Memory Tool  │
+│ • Session Tracking  │       │ • Same SessionId     │
+│ • Working Memory ON │       │ • Same Credentials   │
+└──────────┬──────────┘       └──────────┬───────────┘
+           │                              │
+           │ (memory input)               │ (tool input)
+           └──────────┬───────────────────┘
+                      ↓
+           ┌─────────────────────┐
+           │    AI Agent         │
+           │  • Reads memory     │
+           │  • Calls tool       │
+           └──────────┬──────────┘
+                      ↓
+           ┌─────────────────────┐
+           │   Response Output   │
+           └─────────────────────┘
+```
 
 ### Example Usage
 
@@ -289,18 +331,31 @@ metadata: {
 
 ### Agent Integration
 
-Agents automatically receive instructions on how to update working memory. When they learn new information, they include it in their response:
+Working memory is provided to the agent as **read-only context** at the start of each conversation. To update working memory, the agent must use the **Working Memory Tool** (see [Working Memory Tool Setup](#working-memory-tool-new) below).
+
+**Example Flow:**
 
 ```
-[UPDATE_WORKING_MEMORY]
+Agent receives:
+WORKING_MEMORY (Read-Only):
+# User Information
+- **First Name**:
+- **Location**:
+
+User: "My name is Rufaro and I'm from Zimbabwe"
+
+Agent thinks: "I should update working memory"
+Agent calls: updateWorkingMemory tool with complete updated content
+
+Tool updates database:
 # User Information
 - **First Name**: Rufaro
-- **Last Name**: Mugabe
 - **Location**: Zimbabwe
-[/UPDATE_WORKING_MEMORY]
+
+Agent responds: "Nice to meet you, Rufaro! I'll remember you're from Zimbabwe."
 ```
 
-The system automatically detects and stores the update without slowing down responses.
+The tool-based approach provides transparency and explicit control over memory updates.
 
 ### Benefits
 
@@ -333,31 +388,84 @@ A dedicated tool node that gives AI agents explicit control over working memory 
 **Two-Node Architecture**:
 
 ```
-Postgres Memory+ (Read-Only)
-      ↓
-  AI Agent
-      ↓
-Working Memory Tool (Updates)
+[Postgres Memory+] ──> [AI Agent] <── [Working Memory Tool]
+                           ↓
+                       [Response]
 ```
+
+### ⚠️ IMPORTANT: Manual Setup Required
+
+**n8n does NOT automatically add tool nodes.** You MUST manually:
+
+1. ✅ Add the **Working Memory Tool** node to your workflow
+2. ✅ Connect it to your **AI Agent** as a tool input
+3. ✅ Configure the same credentials and session settings
 
 ### Features
 
-✅ **Explicit Updates** - Agent calls `updateWorkingMemory` tool  
-✅ **Read Capability** - Optional `getWorkingMemory` tool to check current state  
-✅ **Full Instructions** - Tool description includes guidelines and template  
-✅ **Three Modes** - Update Only, Read Only, or Both  
+✅ **Explicit Updates** - Agent calls the tool to update working memory  
+✅ **Token Efficient** - Minimal description reduces AI context usage  
+✅ **Auto-configured** - SessionId automatically matches from `$json.sessionId`  
+✅ **Same Credentials** - Uses same Postgres credentials as Memory+ node  
 ✅ **Same Database** - Works with Postgres Memory+ sessions table
 
-### Quick Setup
+### 🚀 Quick Setup Guide
 
-1. **Postgres Memory+ Node**:
-   - Enable Session Tracking ✅
-   - Enable Working Memory ✅
-2. **Working Memory Tool Node**:
-   - Same Session ID as Memory+ node
-   - Same Sessions Table name
-   - Tool Mode: "Update Only" (recommended)
-3. **Connect both to AI Agent**
+#### Step 1: Configure Postgres Memory+ Node
+
+```
+✅ Enable Session Tracking
+✅ Enable Working Memory
+✅ Set Working Memory Template (optional customization)
+```
+
+#### Step 2: Add Working Memory Tool Node
+
+```
+1. Drag "Working Memory Tool" node onto canvas
+2. Configure:
+   • Session ID: {{ $json.sessionId }} (default, auto-configured)
+   • Sessions Table Name: n8n_chat_sessions (must match Memory+ node)
+   • Schema Name: public (must match Memory+ node)
+   • Credentials: Same Postgres credentials as Memory+ node
+```
+
+#### Step 3: Connect to AI Agent
+
+```
+1. Connect Memory+ node output → AI Agent memory input
+2. Connect Working Memory Tool → AI Agent tool input
+3. Done! Agent can now read and update working memory
+```
+
+### 📋 Configuration Checklist
+
+Make sure these match between **Postgres Memory+** and **Working Memory Tool**:
+
+| Setting               | Must Match |
+| --------------------- | ---------- |
+| Postgres Credentials  | ✅ YES     |
+| Schema Name           | ✅ YES     |
+| Sessions Table Name   | ✅ YES     |
+| Session ID expression | ✅ YES     |
+
+**Default values work out of the box** - just ensure both nodes use the same Postgres credentials!
+
+### 🔧 What's Auto-Configured
+
+The Working Memory Tool comes pre-configured with smart defaults:
+
+- ✅ **Session ID**: `{{ $json.sessionId }}` - Automatically matches the session from context
+- ✅ **Schema Name**: `public` - Default Postgres schema
+- ✅ **Sessions Table**: `n8n_chat_sessions` - Default sessions table name
+
+**You only need to:**
+
+1. Select the same Postgres credentials
+2. Connect to AI Agent
+3. Verify table names match (if you customized them)
+
+That's it! The tool is ready to use.
 
 ### Example
 

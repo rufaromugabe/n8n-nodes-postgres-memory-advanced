@@ -85,7 +85,7 @@ export class WorkingMemoryTool implements INodeType {
 		},
 		credentials: [
 			{
-				name: 'postgresApi',
+				name: 'postgres',
 				required: true,
 			},
 		],
