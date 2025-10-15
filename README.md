@@ -13,10 +13,12 @@ This is an n8n community node that provides advanced PostgreSQL chat memory func
 ✅ **Schema Support** - Organize chat histories across different PostgreSQL schemas  
 ✅ **Auto Schema & Table Creation** - Automatically creates schemas and tables if they don't exist  
 ✅ **Session Tracking** - Optional thread management with metadata table for conversation lists  
+✅ **Working Memory** - Mastra-like persistent user information across conversations  
+✅ **Working Memory Tool** - Explicit tool-based memory updates for transparency (NEW!)  
 ✅ **Context Window** - Configure the number of previous messages to retain  
 ✅ **Session Management** - Flexible session ID management with expression support  
 ✅ **SSL/TLS Support** - Full SSL/TLS connection support  
-✅ **Semantic Search** - Advanced RAG-based memory retrieval with dynamic node shape (NEW in v2.0!)  
+✅ **Semantic Search** - Advanced RAG-based memory retrieval with dynamic node shape  
 ✅ **Token Optimization** - Minimal-token semantic context injection for efficient AI responses  
 ✅ **Multi-version** - Supports versions 1.0, 1.1, 1.2, and 2.0
 
@@ -73,7 +75,9 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
 | **Context Window Length**   | number  | `5`                      | Number of previous messages to retain (v1.1+)              |
 | **Enable Session Tracking** | boolean | `false`                  | Track sessions in separate table for thread management     |
 | **Sessions Table Name**     | string  | `n8n_chat_sessions`      | Table name for session metadata (when tracking is enabled) |
-| **Enable Semantic Search**  | boolean | `false`                  | Enable RAG-based memory retrieval using embeddings (NEW!)  |
+| **Enable Working Memory**   | boolean | `false`                  | Enable Mastra-like persistent user information (NEW!)      |
+| **Working Memory Template** | string  | (user info template)     | Markdown template for storing persistent user data         |
+| **Enable Semantic Search**  | boolean | `false`                  | Enable RAG-based memory retrieval using embeddings         |
 | **Top K Results**           | number  | `3`                      | Number of semantically similar messages to retrieve        |
 | **Message Range**           | number  | `2`                      | Context messages before/after each semantic match          |
 
@@ -181,6 +185,167 @@ The node automatically creates:
 - If permissions are missing, the node logs a warning but continues
 - The `public` schema is never auto-created (it always exists)
 - Graceful fallback if auto-creation fails
+
+## Working Memory (NEW!)
+
+Inspired by Mastra's working memory system, this feature allows agents to maintain persistent, structured information about users across conversations.
+
+### 🧠 What is Working Memory?
+
+Working memory is like the agent's scratchpad - it stores long-term user information that should always be available:
+
+- User preferences
+- Personal details (name, location, etc.)
+- Goals and interests
+- Important facts
+- Ongoing projects
+
+### How It Works
+
+1. **Enable Feature**: Turn on "Working Memory" in Options (requires Session Tracking)
+2. **Customize Template**: Define the structure of information you want to track
+3. **Automatic Injection**: Working memory is injected at the start of every conversation
+4. **Agent Updates**: Agents can update working memory by using special markers
+5. **Non-Blocking**: All operations are asynchronous to ensure no performance impact
+
+### Example Usage
+
+**Initial Template:**
+
+```markdown
+# User Information
+
+- **First Name**:
+- **Last Name**:
+- **Location**:
+- **Interests**:
+```
+
+**After Conversation:**
+
+```markdown
+# User Information
+
+- **First Name**: Rufaro
+- **Last Name**: Mugabe
+- **Location**: Zimbabwe
+- **Interests**: AI, Software Development
+```
+
+### Storage
+
+Working memory is stored in the sessions table `metadata` column as JSONB:
+
+```sql
+metadata: {
+  "workingMemory": "# User Information\n- **First Name**: Rufaro\n..."
+}
+```
+
+### Agent Integration
+
+Agents automatically receive instructions on how to update working memory. When they learn new information, they include it in their response:
+
+```
+[UPDATE_WORKING_MEMORY]
+# User Information
+- **First Name**: Rufaro
+- **Last Name**: Mugabe
+- **Location**: Zimbabwe
+[/UPDATE_WORKING_MEMORY]
+```
+
+The system automatically detects and stores the update without slowing down responses.
+
+### Benefits
+
+- 🧠 **Persistent Memory**: Information persists across all conversations in a thread
+- 🚀 **Non-Blocking**: Zero impact on response speed
+- 📝 **Structured**: Markdown templates keep data organized
+- 🔄 **Automatic**: Agents update memory seamlessly
+- 🎯 **Contextual**: Always available to the agent for better responses
+
+### Documentation
+
+For detailed information, see:
+
+- [Working Memory Documentation](nodes/MemoryPostgresAdvanced/docs/WORKING_MEMORY.md)
+- [Working Memory Quickstart](docs/WORKING_MEMORY_QUICKSTART.md)
+
+## Working Memory Tool (NEW!)
+
+A dedicated tool node that gives AI agents explicit control over working memory through tool calls.
+
+### 🎯 Why Use the Tool?
+
+**Transparency & Control**:
+
+- Tool calls are visible in logs
+- Agent explicitly decides when to update
+- Better debugging and monitoring
+- Cleaner separation of concerns
+
+**Two-Node Architecture**:
+
+```
+Postgres Memory+ (Read-Only)
+      ↓
+  AI Agent
+      ↓
+Working Memory Tool (Updates)
+```
+
+### Features
+
+✅ **Explicit Updates** - Agent calls `updateWorkingMemory` tool  
+✅ **Read Capability** - Optional `getWorkingMemory` tool to check current state  
+✅ **Full Instructions** - Tool description includes guidelines and template  
+✅ **Three Modes** - Update Only, Read Only, or Both  
+✅ **Same Database** - Works with Postgres Memory+ sessions table
+
+### Quick Setup
+
+1. **Postgres Memory+ Node**:
+   - Enable Session Tracking ✅
+   - Enable Working Memory ✅
+2. **Working Memory Tool Node**:
+   - Same Session ID as Memory+ node
+   - Same Sessions Table name
+   - Tool Mode: "Update Only" (recommended)
+3. **Connect both to AI Agent**
+
+### Example
+
+**User:** "My name is Rufaro and I love soccer"
+
+**Agent:**
+
+```
+[Calls updateWorkingMemory tool]
+Input: {
+  "workingMemory": "# User Information\n- **First Name**: Rufaro\n- **Interests**: Soccer"
+}
+
+Response: "Nice to meet you, Rufaro! Soccer is a great sport."
+```
+
+### Benefits vs Automatic Updates
+
+| Feature           | Automatic (Tags) | Tool-Based      |
+| ----------------- | ---------------- | --------------- |
+| Visibility        | Hidden           | Visible in logs |
+| Control           | Automatic        | Explicit        |
+| Debugging         | Harder           | Easier          |
+| Agent reads first | No               | Yes (optional)  |
+| Transparency      | Low              | High            |
+
+### Documentation
+
+For detailed information, see:
+
+- [Working Memory Tool Guide](nodes/WorkingMemoryTool/docs/WORKING_MEMORY_TOOL.md)
+- [Tool Quickstart](docs/WORKING_MEMORY_TOOL_QUICKSTART.md)
+- [Architecture Overview](docs/WORKING_MEMORY_ARCHITECTURE.md)
 
 ## Session Tracking (Thread Management)
 

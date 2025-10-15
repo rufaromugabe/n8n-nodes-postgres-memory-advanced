@@ -48,6 +48,31 @@ export const sessionKeyProperty: INodeProperties = {
 	},
 };
 
+export const workingMemoryTemplateProperty: INodeProperties = {
+	displayName: 'Working Memory Template',
+	name: 'workingMemoryTemplate',
+	type: 'string',
+	typeOptions: {
+		rows: 10,
+	},
+	default: `# User Information
+- **First Name**: 
+- **Last Name**: 
+- **Location**: 
+- **Occupation**: 
+- **Interests**: 
+- **Goals**: 
+- **Events**: 
+- **Facts**: 
+- **Projects**: `,
+	description: 'Markdown template for working memory. The agent will update this with persistent user information.',
+	displayOptions: {
+		show: {
+			'/options.enableWorkingMemory': [true],
+		},
+	},
+};
+
 export const contextWindowLengthProperty: INodeProperties = {
 	displayName: 'Context Window Length',
 	name: 'contextWindowLength',

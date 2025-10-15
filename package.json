@@ -43,7 +43,8 @@
   "n8n": {
   "n8nNodesApiVersion": 1,
   "nodes": [
-      "dist/nodes/MemoryPostgresAdvanced/MemoryPostgresAdvanced.node.js"
+      "dist/nodes/MemoryPostgresAdvanced/MemoryPostgresAdvanced.node.js",
+      "dist/nodes/WorkingMemoryTool/WorkingMemoryTool.node.js"
 ]
   },
   "devDependencies": {
