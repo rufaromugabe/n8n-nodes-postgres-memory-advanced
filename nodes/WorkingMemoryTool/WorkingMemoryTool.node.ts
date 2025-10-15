@@ -2,7 +2,11 @@ import type {
 	IExecuteFunctions,
 	INodeExecutionData,
 	INodeType,
+	INodeTypeBaseDescription,
 	INodeTypeDescription,
+	INodeCredentialTestResult,
+	ICredentialTestFunctions,
+	ICredentialsDecrypted,
 } from 'n8n-workflow';
 import { NodeOperationError } from 'n8n-workflow';
 import pg from 'pg';
@@ -21,11 +25,13 @@ interface PostgresNodeCredentials {
 	sslRejection?: boolean;
 }
 
-// Tool description for AI agents
-const TOOL_DESCRIPTION = `Updates persistent user info across conversations. Use when user shares personal details, goals, or facts. Input example: {"workingMemory": "# User Information\\n- **First Name**: John\\n- **Location**: NYC\\n- **Goals**: Learn Python"}. CRITICAL: Always provide COMPLETE working memory, not incremental changes.`;
+// Default tool description for AI agents
+const DEFAULT_TOOL_DESCRIPTION = `Updates persistent user info across conversations. Use when user shares personal details, goals, or facts. Input example: {"workingMemory": "# User Information\\n- **First Name**: John\\n- **Location**: NYC\\n- **Goals**: Learn Python"}. CRITICAL: Always provide COMPLETE working memory, not incremental changes.`;
 
 // Helper function to configure Postgres pool
 async function configurePostgresPool(credentials: PostgresNodeCredentials): Promise<pg.Pool> {
+	const pg = await import('pg');
+	
 	const config: pg.PoolConfig = {
 		host: credentials.host,
 		port: credentials.port,
@@ -34,21 +40,23 @@ async function configurePostgresPool(credentials: PostgresNodeCredentials): Prom
 		password: credentials.password,
 	};
 
-	// SSL configuration
+	// Handle SSL configuration
 	if (credentials.ssl && credentials.ssl !== 'disable') {
-		config.ssl = {
-			rejectUnauthorized: credentials.ssl === 'verify-full',
+		const sslConfig: any = {
+			rejectUnauthorized: credentials.sslRejection !== false,
 		};
 
 		if (credentials.sslCertificateAuthorityCa) {
-			config.ssl.ca = credentials.sslCertificateAuthorityCa;
+			sslConfig.ca = credentials.sslCertificateAuthorityCa;
 		}
 		if (credentials.sslCertificate) {
-			config.ssl.cert = credentials.sslCertificate;
+			sslConfig.cert = credentials.sslCertificate;
 		}
 		if (credentials.sslKey) {
-			config.ssl.key = credentials.sslKey;
+			sslConfig.key = credentials.sslKey;
 		}
+
+		config.ssl = sslConfig;
 	}
 
 	return new pg.Pool(config);
@@ -72,40 +80,43 @@ async function updateWorkingMemory(
 	await pool.query(query, [sessionId, JSON.stringify(workingMemory)]);
 }
 
-export class WorkingMemoryTool implements INodeType {
-	description: INodeTypeDescription = {
-		displayName: 'Working Memory Tool',
-		name: 'workingMemoryTool',
-		icon: 'file:postgresql.svg',
-		group: ['transform'],
-		version: 1,
-		description: TOOL_DESCRIPTION,
-		defaults: {
-			name: 'Working Memory Tool',
+const versionDescription: INodeTypeDescription = {
+	displayName: 'Working Memory Tool',
+	name: 'workingMemoryTool',
+	icon: 'file:postgresql.svg',
+	group: ['transform'],
+	version: 2,
+	subtitle: 'Tool to update user working memory in Postgres',
+	description: DEFAULT_TOOL_DESCRIPTION,
+	defaults: {
+		name: 'Working Memory Tool',
+	},
+	credentials: [
+		{
+			// eslint-disable-next-line n8n-nodes-base/node-class-description-credentials-name-unsuffixed
+			name: 'postgres',
+			required: true,
+			testedBy: 'postgresConnectionTest',
+			// n8n built-in Postgres credential type is referenced by name only
 		},
-		credentials: [
-			{
-				name: 'postgres',
-				required: true,
-			},
-		],
-		codex: {
-			categories: ['AI'],
-			subcategories: {
-				AI: ['Tools', 'Memory'],
-			},
-			resources: {
-				primaryDocumentation: [
-					{
-						url: 'https://github.com/rufaromugabe/n8n-nodes-postgres-memory-advanced',
-					},
-				],
-			},
+	],
+	codex: {
+		categories: ['AI'],
+		subcategories: {
+			AI: ['Tools', 'Memory'],
 		},
-		inputs: [],
-		outputs: [],
-		usableAsTool: true,
-		properties: [
+		resources: {
+			primaryDocumentation: [
+				{
+					url: 'https://github.com/rufaromugabe/n8n-nodes-postgres-memory-advanced',
+				},
+			],
+		},
+	},
+	inputs: [],
+	outputs: [],
+	usableAsTool: true,
+	properties: [
 			{
 				displayName: 'Note',
 				name: 'notice',
@@ -122,6 +133,40 @@ export class WorkingMemoryTool implements INodeType {
 				name: 'toolOnlyNotice',
 				type: 'notice',
 				default: '',
+			},
+			{
+				displayName: 'Description',
+				name: 'descriptionType',
+				type: 'options',
+				options: [
+					{
+						name: 'Auto',
+						value: 'auto',
+						description: 'Use the default tool description',
+					},
+					{
+						name: 'Manual',
+						value: 'manual',
+						description: 'Provide a custom tool description',
+					},
+				],
+				default: 'auto',
+				description: 'Whether to use the default tool description or provide a custom one',
+			},
+			{
+				displayName: 'Description',
+				name: 'description',
+				type: 'string',
+				default: DEFAULT_TOOL_DESCRIPTION,
+				description: 'Custom description for the AI agent to understand when to use this tool',
+				displayOptions: {
+					show: {
+						descriptionType: ['manual'],
+					},
+				},
+				typeOptions: {
+					rows: 4,
+				},
 			},
 			{
 				displayName: 'Working Memory Content',
@@ -158,6 +203,45 @@ export class WorkingMemoryTool implements INodeType {
 				description: 'Name of the sessions table (must match the Postgres Memory+ node configuration)',
 			},
 		],
+};
+
+export class WorkingMemoryTool implements INodeType {
+	description: INodeTypeDescription;
+
+	constructor(baseDescription: INodeTypeBaseDescription) {
+		this.description = {
+			...baseDescription,
+			...versionDescription,
+		};
+	}
+
+	methods = {
+		credentialTest: {
+			async postgresConnectionTest(
+				this: ICredentialTestFunctions,
+				credential: ICredentialsDecrypted,
+			): Promise<INodeCredentialTestResult> {
+				const credentials = credential.data as unknown as PostgresNodeCredentials;
+				
+				try {
+					const pool = await configurePostgresPool(credentials);
+					const client = await pool.connect();
+					await client.query('SELECT 1');
+					client.release();
+					await pool.end();
+
+					return {
+						status: 'OK',
+						message: 'Connection successful',
+					};
+				} catch (error) {
+					return {
+						status: 'Error',
+						message: error.message,
+					};
+				}
+			},
+		},
 	};
 
 	async execute(this: IExecuteFunctions): Promise<INodeExecutionData[][]> {
@@ -167,7 +251,7 @@ export class WorkingMemoryTool implements INodeType {
 		// Process all items - respond immediately and update in background
 		for (let i = 0; i < items.length; i++) {
 			try {
-				const credentials = await this.getCredentials('postgres');
+				const credentials = await this.getCredentials<PostgresNodeCredentials>('postgres');
 				const sessionId = this.getNodeParameter('sessionId', i) as string;
 				const schemaName = this.getNodeParameter('schemaName', i, 'public') as string;
 				const sessionsTableName = this.getNodeParameter('sessionsTableName', i, 'n8n_chat_sessions') as string;
@@ -179,7 +263,7 @@ export class WorkingMemoryTool implements INodeType {
 				}
 
 				// Fire and forget - update in background
-				configurePostgresPool(credentials as unknown as PostgresNodeCredentials)
+				configurePostgresPool(credentials)
 					.then(async (pool) => {
 						try {
 							await updateWorkingMemory(pool, schemaName, sessionsTableName, sessionId, workingMemoryContent);
