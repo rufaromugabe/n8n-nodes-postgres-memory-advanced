@@ -21,36 +21,8 @@ interface PostgresNodeCredentials {
 	sslRejection?: boolean;
 }
 
-// Default working memory template
-const DEFAULT_TEMPLATE = `# User Information
-- **First Name**: 
-- **Last Name**: 
-- **Location**: 
-- **Occupation**: 
-- **Interests**: 
-- **Goals**: 
-- **Events**: 
-- **Facts**: 
-- **Projects**: `;
-
 // Tool description for AI agents
-const TOOL_DESCRIPTION = `Tool for updating persistent user information across conversations. This tool is designed exclusively for AI agents to manage working memory.
-
-When to use:
-- User shares personal information (name, location, preferences)
-- User mentions goals, projects, or important facts
-- Information should persist across conversations
-
-Template Structure:
-${DEFAULT_TEMPLATE}
-
-Input format:
-{
-  "workingMemory": "# User Information\\n- **First Name**: John\\n- **Last Name**: Doe\\n...",
-  "sessionId": "session-123"
-}
-
-IMPORTANT: Always include the COMPLETE working memory in updates, not just changes.`;
+const TOOL_DESCRIPTION = `Updates persistent user info across conversations. Use when user shares personal details, goals, or facts. Input example: {"workingMemory": "# User Information\\n- **First Name**: John\\n- **Location**: NYC\\n- **Goals**: Learn Python"}. CRITICAL: Always provide COMPLETE working memory, not incremental changes.`;
 
 // Helper function to configure Postgres pool
 async function configurePostgresPool(credentials: PostgresNodeCredentials): Promise<pg.Pool> {
@@ -108,7 +80,6 @@ export class WorkingMemoryTool implements INodeType {
 		group: ['transform'],
 		version: 1,
 		description: TOOL_DESCRIPTION,
-		subtitle: '={{$parameter["operation"] || "Update Working Memory"}}',
 		defaults: {
 			name: 'Working Memory Tool',
 		},
@@ -161,7 +132,7 @@ export class WorkingMemoryTool implements INodeType {
 				typeOptions: {
 					rows: 10,
 				},
-				placeholder: DEFAULT_TEMPLATE,
+				placeholder: '# User Information\n- **First Name**: \n- **Location**: \n- **Goals**: ',
 				required: true,
 			},
 			{

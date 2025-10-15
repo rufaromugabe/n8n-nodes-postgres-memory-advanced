@@ -157,42 +157,6 @@ async function getWorkingMemory(
 	return result.rows[0]?.working_memory || null;
 }
 
-// Helper function to update working memory for a session
-// Optimized: Primary key lookup, efficient JSONB update
-async function updateWorkingMemory(
-	pool: pg.Pool,
-	schemaName: string,
-	tableName: string,
-	sessionId: string,
-	workingMemory: string,
-): Promise<void> {
-	const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}"` : `"${tableName}"`;
-	
-	// Optimized query: Primary key update (fast), only touches metadata JSONB field
-	const query = `
-		UPDATE ${qualifiedTableName}
-		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{workingMemory}', $2::jsonb, true),
-			updated_at = NOW()
-		WHERE id = $1
-	`;
-	
-	await pool.query(query, [sessionId, JSON.stringify(workingMemory)]);
-}
-
-// Helper function to parse working memory updates from agent responses
-// Uses Mastra-style <working_memory> tags
-function parseWorkingMemoryUpdate(text: string): string | null {
-	const workingMemoryRegex = /<working_memory>([^]*?)<\/working_memory>/g;
-	const matches = text.match(workingMemoryRegex);
-	const match = matches?.[0];
-
-	if (match) {
-		return match.replace(/<\/?working_memory>/g, '').trim();
-	}
-
-	return null;
-}
-
 export class MemoryPostgresAdvanced implements INodeType {
 	description: INodeTypeDescription = {
 		displayName: 'Postgres Memory+',
@@ -497,32 +461,11 @@ export class MemoryPostgresAdvanced implements INodeType {
 		if (enableSessionTracking || enableSemanticSearch) {
 			const originalAddMessage = pgChatHistory.addMessage.bind(pgChatHistory);
 			pgChatHistory.addMessage = async (message: any) => {
-				let messageContent = typeof message.content === 'string' 
+				const messageContent = typeof message.content === 'string' 
 					? message.content 
 					: JSON.stringify(message.content);
 				
-				// Check for working memory updates in AI responses and strip tags
-				if (enableWorkingMemory && message._getType() === 'ai') {
-					const workingMemoryUpdate = parseWorkingMemoryUpdate(messageContent);
-					if (workingMemoryUpdate) {
-						this.logger.info('Working memory update detected in AI response');
-						
-						// Strip the working memory tags from the message before saving
-						messageContent = messageContent.replace(/<working_memory>([^]*?)<\/working_memory>/g, '').trim();
-						message.content = messageContent;
-						
-						// Update working memory in database (non-blocking - fire and forget)
-						updateWorkingMemory(pool, schemaName, sessionsTableName, sessionId, workingMemoryUpdate)
-							.then(() => {
-								this.logger.info('✅ Working memory updated successfully');
-							})
-							.catch((error) => {
-								this.logger.warn(`Could not update working memory: ${error.message}`);
-							});
-					}
-				}
-				
-				// Now add the message to history (with tags stripped if applicable)
+				// Add the message to history
 				await originalAddMessage(message);
 				
 				// Update session metadata (non-blocking - fire and forget)
