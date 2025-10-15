@@ -2,7 +2,6 @@ import type {
 	IExecuteFunctions,
 	INodeExecutionData,
 	INodeType,
-	INodeTypeBaseDescription,
 	INodeTypeDescription,
 	INodeCredentialTestResult,
 	ICredentialTestFunctions,
@@ -24,9 +23,6 @@ interface PostgresNodeCredentials {
 	sslKey?: string;
 	sslRejection?: boolean;
 }
-
-// Default tool description for AI agents
-const DEFAULT_TOOL_DESCRIPTION = `Updates persistent user info across conversations. Use when user shares personal details, goals, or facts. Input example: {"workingMemory": "# User Information\\n- **First Name**: John\\n- **Location**: NYC\\n- **Goals**: Learn Python"}. CRITICAL: Always provide COMPLETE working memory, not incremental changes.`;
 
 // Helper function to configure Postgres pool
 async function configurePostgresPool(credentials: PostgresNodeCredentials): Promise<pg.Pool> {
@@ -80,43 +76,44 @@ async function updateWorkingMemory(
 	await pool.query(query, [sessionId, JSON.stringify(workingMemory)]);
 }
 
-const versionDescription: INodeTypeDescription = {
-	displayName: 'Working Memory Tool',
-	name: 'workingMemoryTool',
-	icon: 'file:postgresql.svg',
-	group: ['transform'],
-	version: 2,
-	subtitle: 'Tool to update user working memory in Postgres',
-	description: DEFAULT_TOOL_DESCRIPTION,
-	defaults: {
-		name: 'Working Memory Tool',
-	},
-	credentials: [
-		{
-			// eslint-disable-next-line n8n-nodes-base/node-class-description-credentials-name-unsuffixed
-			name: 'postgres',
-			required: true,
-			testedBy: 'postgresConnectionTest',
-			// n8n built-in Postgres credential type is referenced by name only
+export class WorkingMemoryTool implements INodeType {
+	description: INodeTypeDescription = {
+		displayName: 'Working Memory',
+		name: 'workingMemory',
+		icon: 'file:postgresql.svg',
+		group: ['transform'],
+		version: 2,
+		description: 'Tool for storing and updating persistent user information across conversation sessions for working memory',
+		defaults: {
+			name: 'Working Memory',
 		},
-	],
-	codex: {
-		categories: ['AI'],
-		subcategories: {
-			AI: ['Tools', 'Memory'],
+		credentials: [
+			{
+				// eslint-disable-next-line n8n-nodes-base/node-class-description-credentials-name-unsuffixed
+				name: 'postgres',
+				required: true,
+				testedBy: 'postgresConnectionTest',
+			},
+		],
+		codex: {
+			categories: ['AI'],
+			subcategories: {
+				AI: ['Tools', 'Memory'],
+			},
+			resources: {
+				primaryDocumentation: [
+					{
+						url: 'https://github.com/rufaromugabe/n8n-nodes-postgres-memory-advanced',
+					},
+				],
+			},
 		},
-		resources: {
-			primaryDocumentation: [
-				{
-					url: 'https://github.com/rufaromugabe/n8n-nodes-postgres-memory-advanced',
-				},
-			],
-		},
-	},
-	inputs: [],
-	outputs: [],
-	usableAsTool: true,
-	properties: [
+
+		inputs: [],
+		
+		outputs: [],
+		usableAsTool: true,
+		properties: [
 			{
 				displayName: 'Note',
 				name: 'notice',
@@ -129,51 +126,17 @@ const versionDescription: INodeTypeDescription = {
 				},
 			},
 			{
-				displayName: 'This node is designed exclusively for use as an AI agent tool. It cannot be used as a regular workflow node.',
+				displayName: 'This node is designed exclusively to be used as a tool within AI agents. It utilizes advanced memory management features that is special postgres memory+ node. It does not produce direct output and is not intended for standalone use.',
 				name: 'toolOnlyNotice',
 				type: 'notice',
 				default: '',
-			},
-			{
-				displayName: 'Description',
-				name: 'descriptionType',
-				type: 'options',
-				options: [
-					{
-						name: 'Auto',
-						value: 'auto',
-						description: 'Use the default tool description',
-					},
-					{
-						name: 'Manual',
-						value: 'manual',
-						description: 'Provide a custom tool description',
-					},
-				],
-				default: 'auto',
-				description: 'Whether to use the default tool description or provide a custom one',
-			},
-			{
-				displayName: 'Description',
-				name: 'description',
-				type: 'string',
-				default: DEFAULT_TOOL_DESCRIPTION,
-				description: 'Custom description for the AI agent to understand when to use this tool',
-				displayOptions: {
-					show: {
-						descriptionType: ['manual'],
-					},
-				},
-				typeOptions: {
-					rows: 4,
-				},
 			},
 			{
 				displayName: 'Working Memory Content',
 				name: 'workingMemory',
 				type: 'string',
 				default: '={{ $json.workingMemory }}',
-				description: 'The complete working memory content in Markdown format. This will be stored in the database.',
+				description: 'The complete working memory content in Markdown format. This will be stored in the database. append to the template with new information.and add more information as needed.  {"workingMemory": "# User Information\n- **First Name**: John\n- **Location**: NYC\n- **Goals**: Learn Python"}. CRITICAL: Always provide COMPLETE working memory,',
 				typeOptions: {
 					rows: 10,
 				},
@@ -203,17 +166,7 @@ const versionDescription: INodeTypeDescription = {
 				description: 'Name of the sessions table (must match the Postgres Memory+ node configuration)',
 			},
 		],
-};
-
-export class WorkingMemoryTool implements INodeType {
-	description: INodeTypeDescription;
-
-	constructor(baseDescription: INodeTypeBaseDescription) {
-		this.description = {
-			...baseDescription,
-			...versionDescription,
-		};
-	}
+	};
 
 	methods = {
 		credentialTest: {

@@ -293,7 +293,12 @@ export class MemoryPostgresAdvanced implements INodeType {
 						name: 'enableWorkingMemory',
 						type: 'boolean',
 						default: false,
-						description: 'Whether to enable working memory - persistent user information that the agent can update (requires Session Tracking to be enabled)',
+						description: 'Whether to enable working memory - persistent user information that the agent can update',
+						displayOptions: {
+							show: {
+								enableSessionTracking: [true],
+							},
+						},
 					},
 					{
 						displayName: 'Working Memory Template',
@@ -557,12 +562,12 @@ export class MemoryPostgresAdvanced implements INodeType {
 						
 						// Create system message with working memory (read-only)
 						// Note: Update instructions are provided by the Working Memory Tool node
-						const workingMemoryContent = `WORKING_MEMORY (Read-Only):
-This is persistent information about the user that has been stored across conversations.
+						const workingMemoryContent = `WORKING_MEMORY: Persistent user information across conversations.
 
 ${workingMemoryData}
 
-Note: To update working memory, use the updateWorkingMemory tool if available.`;
+UPDATE WHEN: User shares personal details (name, location, job, preferences, goals, events, facts, projects, relationships, etc.)
+HOW: Use Working Memory Tool. Keep ALL fields (even empty), update relevant ones, or add new fields. Always send COMPLETE memory.`;
 						
 						const workingMemoryMessage = new SystemMessage(workingMemoryContent);
 						
