@@ -1,3 +1,4 @@
+/* eslint-disable n8n-nodes-base/node-filename-against-convention */
 import type {
 	IExecuteFunctions,
 	INodeExecutionData,
@@ -136,7 +137,7 @@ export class WorkingMemoryTool implements INodeType {
 				name: 'workingMemory',
 				type: 'string',
 				default: '={{ $json.workingMemory }}',
-				description: 'The complete working memory content in Markdown format. This will be stored in the database. append to the template with new information.and add more information as needed.  {"workingMemory": "# User Information\n- **First Name**: John\n- **Location**: NYC\n- **Goals**: Learn Python"}. CRITICAL: Always provide COMPLETE working memory,',
+				description: 'The complete working memory content in Markdown format. This will be stored in the database.',
 				typeOptions: {
 					rows: 10,
 				},
