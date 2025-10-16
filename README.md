@@ -191,6 +191,8 @@ Working memory is like the agent's scratchpad - it stores long-term user informa
 
 ```
 
+![Main Node Configuration](nodes/MemoryPostgresAdvanced/docs/main-node.png)
+
 ### Example Usage
 
 **Initial Template:**
