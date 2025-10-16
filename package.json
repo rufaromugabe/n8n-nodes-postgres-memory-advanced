@@ -1,6 +1,6 @@
 {
   "name": "n8n-nodes-postgres-advanced-memory",
-  "version": "2.1.5",
+  "version": "2.2.5",
   "description": "Postgres Memory+ node for n8n with schema support, thread management, and optimized semantic search",
   "keywords": [
     "n8n-community-node-package",
