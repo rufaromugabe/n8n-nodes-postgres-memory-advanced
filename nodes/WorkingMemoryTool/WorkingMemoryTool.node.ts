@@ -28,7 +28,7 @@ interface PostgresNodeCredentials {
 // Helper function to configure Postgres pool
 async function configurePostgresPool(credentials: PostgresNodeCredentials): Promise<pg.Pool> {
 	const pg = await import('pg');
-	
+
 	const config: pg.PoolConfig = {
 		host: credentials.host,
 		port: credentials.port,
@@ -59,14 +59,47 @@ async function configurePostgresPool(credentials: PostgresNodeCredentials): Prom
 	return new pg.Pool(config);
 }
 
-// Update working memory
+// Validate working memory content (JSON only)
+function validateWorkingMemory(content: any): { isValid: boolean; parsed?: any; error?: string; warning?: string } {
+	try {
+		let parsed;
+		if (typeof content === 'string') {
+			parsed = JSON.parse(content);
+		} else {
+			parsed = content;
+		}
+
+		if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+			return { isValid: false, error: 'Working memory must be a valid JSON object (not array or null)' };
+		}
+
+		// Check if it looks like a minimal object (might be missing template fields)
+		const fieldCount = Object.keys(parsed).length;
+		let warning;
+		if (fieldCount < 3) {
+			warning = `Only ${fieldCount} fields provided. Remember to include ALL existing template fields + any new fields (surname, gender, etc.)`;
+		}
+
+		return { isValid: true, parsed, warning };
+	} catch (error: any) {
+		return { isValid: false, error: `Invalid JSON: ${error.message}` };
+	}
+}
+
+// Update working memory with validation
 async function updateWorkingMemory(
 	pool: pg.Pool,
 	schemaName: string,
 	sessionsTableName: string,
 	sessionId: string,
-	workingMemory: string,
-): Promise<void> {
+	workingMemory: any,
+): Promise<{ success: boolean; error?: string }> {
+	// Validate the working memory content
+	const validation = validateWorkingMemory(workingMemory);
+	if (!validation.isValid) {
+		return { success: false, error: validation.error };
+	}
+
 	const query = `
 		UPDATE ${schemaName ? `"${schemaName}".` : ''}"${sessionsTableName}"
 		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{workingMemory}', $2::jsonb, true),
@@ -74,7 +107,13 @@ async function updateWorkingMemory(
 		WHERE id = $1
 	`;
 
-	await pool.query(query, [sessionId, JSON.stringify(workingMemory)]);
+	try {
+		// Store the validated JSON content
+		await pool.query(query, [sessionId, JSON.stringify(validation.parsed)]);
+		return { success: true };
+	} catch (error: any) {
+		return { success: false, error: `Database update failed: ${error.message}` };
+	}
 }
 
 export class WorkingMemoryTool implements INodeType {
@@ -84,7 +123,7 @@ export class WorkingMemoryTool implements INodeType {
 		icon: 'file:postgresql.svg',
 		group: ['transform'],
 		version: 2,
-		description: 'Tool for storing and updating persistent user information across conversation sessions for working memory',
+		description: 'Update working memory with new information. Uses EXTENSIBLE SCHEMA: preserve template structure + add new fields as needed. Always send complete JSON object with all existing fields plus any new ones.',
 		defaults: {
 			name: 'Working Memory',
 		},
@@ -111,7 +150,7 @@ export class WorkingMemoryTool implements INodeType {
 		},
 
 		inputs: [],
-		
+
 		outputs: [],
 		usableAsTool: true,
 		properties: [
@@ -127,7 +166,7 @@ export class WorkingMemoryTool implements INodeType {
 				},
 			},
 			{
-				displayName: 'This node is designed exclusively to be used as a tool within AI agents. It utilizes advanced memory management features that is special postgres memory+ node. It does not produce direct output and is not intended for standalone use.',
+				displayName: 'AI Agent Tool: Updates persistent user working memory .',
 				name: 'toolOnlyNotice',
 				type: 'notice',
 				default: '',
@@ -135,13 +174,13 @@ export class WorkingMemoryTool implements INodeType {
 			{
 				displayName: 'Working Memory Content',
 				name: 'workingMemory',
-				type: 'string',
+				type: 'json',
 				default: '={{ $json.workingMemory }}',
-				description: 'The complete working memory content in Markdown format. This will be stored in the database.',
+				description: 'Complete working memory as JSON object. EXTENSIBLE SCHEMA: Base template provides structure, but you can add ANY new fields (surname, gender, age, phone, etc.). Always include ALL current fields + new ones. This gives structure with flexibility.',
 				typeOptions: {
 					rows: 10,
 				},
-				placeholder: '# User Information\n- **First Name**: \n- **Location**: \n- **Goals**: ',
+				placeholder: '{\n  "name": "John",\n  "location": "",\n  "occupation": "",\n  "interests": [],\n  "goals": [],\n  "preferences": {},\n  "surname": "Smith",\n  "gender": "male"\n}',
 				required: true,
 			},
 			{
@@ -176,7 +215,7 @@ export class WorkingMemoryTool implements INodeType {
 				credential: ICredentialsDecrypted,
 			): Promise<INodeCredentialTestResult> {
 				const credentials = credential.data as unknown as PostgresNodeCredentials;
-				
+
 				try {
 					const pool = await configurePostgresPool(credentials);
 					const client = await pool.connect();
@@ -209,24 +248,38 @@ export class WorkingMemoryTool implements INodeType {
 				const sessionId = this.getNodeParameter('sessionId', i) as string;
 				const schemaName = this.getNodeParameter('schemaName', i, 'public') as string;
 				const sessionsTableName = this.getNodeParameter('sessionsTableName', i, 'n8n_chat_sessions') as string;
-				const workingMemoryContent = this.getNodeParameter('workingMemory', i) as string;
+				const workingMemoryContent = this.getNodeParameter('workingMemory', i);
 
 				// Validate working memory content
 				if (!workingMemoryContent) {
 					throw new NodeOperationError(this.getNode(), 'Working memory content is required');
 				}
 
+				// Validate JSON content
+				const validation = validateWorkingMemory(workingMemoryContent);
+				if (!validation.isValid) {
+					throw new NodeOperationError(this.getNode(), `Invalid JSON format: ${validation.error}`);
+				}
+
+				// Log warning if object seems incomplete
+				if (validation.warning) {
+					console.warn(`Working Memory Warning: ${validation.warning}`);
+				}
+
 				// Fire and forget - update in background
 				configurePostgresPool(credentials)
 					.then(async (pool) => {
 						try {
-							await updateWorkingMemory(pool, schemaName, sessionsTableName, sessionId, workingMemoryContent);
+							const result = await updateWorkingMemory(pool, schemaName, sessionsTableName, sessionId, validation.parsed);
+							if (!result.success) {
+								console.error('Background working memory update failed:', result.error);
+							}
 						} catch (error) {
 							// Log error but don't throw (background operation)
 							console.error('Background working memory update failed:', error);
 						} finally {
 							// Clean up pool
-							pool.end().catch(() => {});
+							pool.end().catch(() => { });
 						}
 					})
 					.catch((error) => {
@@ -238,8 +291,9 @@ export class WorkingMemoryTool implements INodeType {
 					json: {
 						success: true,
 						sessionId,
-						result: `Working memory update queued for session: ${sessionId}`,
-						storedContent: workingMemoryContent,
+						format: 'json',
+						result: `Working memory (JSON) update queued for session: ${sessionId}`,
+						storedContent: validation.parsed,
 						async: true,
 					},
 					pairedItem: { item: i },

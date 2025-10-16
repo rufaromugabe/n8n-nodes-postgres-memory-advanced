@@ -13,15 +13,10 @@ This is an n8n community node that provides advanced PostgreSQL chat memory func
 ✅ **Schema Support** - Organize chat histories across different PostgreSQL schemas  
 ✅ **Auto Schema & Table Creation** - Automatically creates schemas and tables if they don't exist  
 ✅ **Session Tracking** - Optional thread management with metadata table for conversation lists  
-✅ **Working Memory** - Persistent user information across conversations (requires manual tool setup)  
-✅ **Working Memory Tool** - Dedicated node for explicit memory updates (**must be manually connected**)  
-✅ **Context Window** - Configure the number of previous messages to retain  
-✅ **Session Management** - Flexible session ID management with expression support  
-✅ **SSL/TLS Support** - Full SSL/TLS connection support  
-✅ **Semantic Search** - Advanced RAG-based memory retrieval with dynamic node shape  
-✅ **Token Optimization** - Minimal-token semantic context injection for efficient AI responses  
-✅ **Performance Optimized** - Parallel query loading and optimized database operations (NEW!)  
-✅ **Multi-version** - Supports versions 1.0, 1.1, 1.2, and 2.0
+✅ **Working Memory** - Persistent user information with extensible JSON schema (requires manual tool setup)  
+✅ **Working Memory Tool** - Dedicated node for structured memory updates (**must be manually connected**)
+
+✅ **Semantic Search** - Advanced RAG-based memory retrieval with dynamic node shape
 
 ## 🚨 Working Memory Setup Required
 
@@ -30,8 +25,6 @@ This is an n8n community node that provides advanced PostgreSQL chat memory func
 > 1. Add **"Working Memory Tool"** node to your workflow
 > 2. Connect it to your **AI Agent** as a tool input
 > 3. Use same **Postgres credentials** and **session settings**
->
-> See [Working Memory Tool Setup](#working-memory-tool-new) for detailed instructions.
 
 ## Screenshots
 
@@ -42,50 +35,6 @@ This is an n8n community node that provides advanced PostgreSQL chat memory func
 ### Schema and Session Setup
 
 ![Schema and Session Configuration](nodes/MemoryPostgresAdvanced/docs/Schema%20and%20session%20defination.png)
-
-## ⚡ Performance Optimizations (NEW!)
-
-This package includes significant performance improvements to eliminate latency in agent responses:
-
-### Parallel Query Loading
-
-**50-70% faster database operations** through parallel execution:
-
-```
-Before (Sequential):
-Load chat history:    200ms  ─────────────────────
-Load working memory:  150ms                        ─────────────────
-Total:                350ms  ═════════════════════════════════════
-
-After (Parallel):
-Load chat history:    200ms  ─────────────────────
-Load working memory:  150ms  ─────────────────
-Total:                200ms  ═══════════════════── (only longest query)
-```
-
-### Optimized Database Queries
-
-- **Primary key indexes** for instant lookups
-- **LIMIT 1** on single-row queries
-- **Selective field extraction** from JSONB (only what's needed)
-- **Parallel schema + table creation** during initialization
-
-### Non-Blocking Operations
-
-All background operations (session tracking, embeddings) use:
-
-- **Fire-and-forget** patterns
-- **setImmediate()** for deferred execution
-- **Zero blocking** of agent responses
-
-### Optional Session Tracking
-
-Session metadata updates are **purely for UI purposes**. If you don't need a sessions list:
-
-- **Disable Session Tracking** for maximum performance
-- Working Memory can still function with optimized direct queries
-
-**See [PERFORMANCE_OPTIMIZATIONS.md](PERFORMANCE_OPTIMIZATIONS.md) for detailed technical analysis.**
 
 ## Installation
 
@@ -130,8 +79,8 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
 | **Context Window Length**   | number  | `5`                      | Number of previous messages to retain (v1.1+)                                      |
 | **Enable Session Tracking** | boolean | `false`                  | Track sessions in separate table (UI only). Disable if not needed for performance. |
 | **Sessions Table Name**     | string  | `n8n_chat_sessions`      | Table name for session metadata (when tracking is enabled)                         |
-| **Enable Working Memory**   | boolean | `false`                  | Enable Mastra-like persistent user information                                     |
-| **Working Memory Template** | string  | (user info template)     | Markdown template for storing persistent user data                                 |
+| **Enable Working Memory**   | boolean | `false`                  | Enable persistent user information with extensible JSON schema                     |
+| **Working Memory Template** | JSON    | (user info template)     | JSON template for storing structured user data with extensible fields              |
 | **Enable Semantic Search**  | boolean | `false`                  | Enable RAG-based memory retrieval using embeddings                                 |
 | **Top K Results**           | number  | `3`                      | Number of semantically similar messages to retrieve                                |
 | **Message Range**           | number  | `2`                      | Context messages before/after each semantic match                                  |
@@ -140,23 +89,12 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
 
 ### 🎯 Revolutionary Features
 
-**Dynamic Node Shape** - The node automatically adapts its connection points:
-
-- **Semantic Search OFF**: No input connections (normal memory node)
-- **Semantic Search ON**: Shows Vector Store input connection
-
-**Token-Optimized Context Injection** - Minimal overhead, maximum efficiency:
-
-- Injects actual message objects into chat history
-- Uses only ~10 tokens for demarcation markers
-- 90% fewer tokens compared to traditional context injection methods
-
 ### How It Works
 
 1. **Enable Feature**: Turn on "Semantic Search" in Options
-2. **Connect Vector Store**: Attach your Vector Store node (the node shape changes automatically!)
+2. **Connect Vector Store**: Attach your Vector Store node
 3. **Set Context Window**: Configure your desired context window length (e.g., 10 messages)
-4. **Automatic Embedding**: Messages are embedded using the vector store's internal model (non-blocking)
+4. **Automatic Embedding**: Messages are embedded using the vector store's internal model
 5. **Smart Activation**: Semantic search ONLY runs when context window is full
    - Short conversations: Uses regular memory (instant, no overhead)
    - Long conversations: Automatically retrieves relevant older messages
@@ -164,16 +102,6 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
 
 ### Setup Example
 
-```
-                             ┌──────────────────────────────┐
-┌─────────────────┐          │  Postgres Memory+            │
-│ Vector Store    │─────────>│  ┌────────────────────────┐  │
-│ (with Embeddings│  When    │  │ Semantic Search: ON    │  │──> AI Agent
-│  connected)     │  enabled │  │ • Vector Store Input   │  │
-└─────────────────┘          │  └────────────────────────┘  │
-                             └──────────────────────────────┘
-
-When Semantic Search is OFF, the node has no input connections (normal memory shape)
 ```
 
 ### Configuration
@@ -183,19 +111,7 @@ When Semantic Search is OFF, the node has no input connections (normal memory sh
 | **Top K Results** | Number of similar past messages to retrieve (default: 3) |
 | **Message Range** | Include N messages before/after each match (default: 2)  |
 
-### How Context is Injected
 
-**Optimized Format** (Minimal Tokens):
-
-```
-System: === Relevant Context from Earlier Conversation ===
-Human: my name is rufaro mugabe
-AI: Nice to meet you, Rufaro Mugabe!
-Human: what do you do
-AI: I'm an AI assistant here to help you...
-System: === Current Conversation ===
-Human: [current message continues...]
-```
 
 ### Benefits
 
@@ -205,9 +121,8 @@ Human: [current message continues...]
 - ⚡ **Zero Overhead**: No performance impact when context window isn't full
 - 🎯 **Smart Activation**: Only searches when there are older messages beyond recent context
 - 💰 **Token Efficient**: 90% reduction in context overhead
-- 🎨 **Clean UI**: Dynamic node shape based on configuration
-- 🔌 **Simple Setup**: Only need Vector Store (uses its internal embedding model)
-- 🚀 **Instant Detection**: Uses already-loaded messages, no extra database queries
+- 🔌 **Simple Setup**: Only need Vector Store
+
 
 ### Supported Vector Stores
 
@@ -235,17 +150,13 @@ The node automatically creates:
 - For schema creation: Database user needs `CREATE SCHEMA` permission
 - For table creation: Database user needs `CREATE TABLE` permission in the schema
 
-**Behavior:**
 
-- If permissions are missing, the node logs a warning but continues
-- The `public` schema is never auto-created (it always exists)
-- Graceful fallback if auto-creation fails
 
-## Working Memory (NEW!)
+## Working Memory
 
-> **⚠️ IMPORTANT:** Working Memory requires the **Working Memory Tool** node to be **manually added and connected** to your AI Agent. See [Working Memory Tool Setup](#working-memory-tool-new) below for configuration instructions.
+> **⚠️ IMPORTANT:** Working Memory requires the **Working Memory Tool** node to be **manually added and connected** to your AI Agent. below for configuration instructions.
 
-Inspired by Mastra's working memory system, this feature allows agents to maintain persistent, structured information about users across conversations.
+This feature allows agents to maintain persistent, structured information about users across conversations using an extensible JSON schema approach.
 
 ### 🧠 What is Working Memory?
 
@@ -262,61 +173,68 @@ Working memory is like the agent's scratchpad - it stores long-term user informa
 1. **Enable Feature**: Turn on "Working Memory" in Options (requires Session Tracking)
 2. **Add Tool Node**: Manually add **Working Memory Tool** node and connect to AI Agent
 3. **Customize Template**: Define the structure of information you want to track
-4. **Automatic Injection**: Working memory is injected at the start of every conversation
-5. **Agent Updates**: Agent uses the Working Memory Tool to update persistent information
-6. **Non-Blocking**: All operations are asynchronous to ensure no performance impact
+4. **Agent Updates**: Agent uses the Working Memory Tool to update persistent information
+
 
 ### Complete Workflow Setup
 
 ```
+
 ┌─────────────────────┐
-│  Chat Trigger       │
-│  (Webhook/Chat)     │
+│ Chat Trigger │
+│ (Webhook/Chat) │
 └──────────┬──────────┘
-           │
-           ↓
-┌─────────────────────┐       ┌──────────────────────┐
-│ Postgres Memory+    │       │ Working Memory Tool  │
-│ • Session Tracking  │       │ • Same SessionId     │
-│ • Working Memory ON │       │ • Same Credentials   │
-└──────────┬──────────┘       └──────────┬───────────┘
-           │                              │
-           │ (memory input)               │ (tool input)
-           └──────────┬───────────────────┘
-                      ↓
-           ┌─────────────────────┐
-           │    AI Agent         │
-           │  • Reads memory     │
-           │  • Calls tool       │
-           └──────────┬──────────┘
-                      ↓
-           ┌─────────────────────┐
-           │   Response Output   │
-           └─────────────────────┘
-```
+│
+↓
+┌─────────────────────┐ ┌──────────────────────┐
+│ Postgres Memory+ │ │ Working Memory Tool │
+│ • Session Tracking │ │ • Same SessionId │
+│ • Working Memory ON │ │ • Same Credentials │
+└──────────┬──────────┘ └──────────┬───────────┘
+│ │
+│ (memory input) │ (tool input)
+└──────────┬───────────────────┘
+↓
+┌─────────────────────┐
+│ AI Agent │
+│ • Reads memory │
+│ • Calls tool │
+└──────────┬──────────┘
+↓
+┌─────────────────────┐
+│ Response Output │
+└─────────────────────┘
+
+````
 
 ### Example Usage
 
 **Initial Template:**
 
-```markdown
-# User Information
-
-- **First Name**:
-- **Last Name**:
-- **Location**:
-- **Interests**:
-```
+```json
+{
+	"name": "",
+	"location": "",
+	"occupation": "",
+	"interests": [],
+	"goals": [],
+	"preferences": {}
+}
+````
 
 **After Conversation:**
 
-```markdown
-# User Information
-
-- **First Name**: Rufaro
-- **Last Name**: Mugabe
-- **Location**: Zimbabwe
-- **Interests**: AI, Software Development
+```json
+{
+	"name": "Rufaro",
+	"location": "Zimbabwe",
+	"occupation": "Developer",
+	"interests": ["AI", "Software Development"],
+	"goals": ["Build AI applications"],
+	"preferences": {},
+	"surname": "Mugabe",
+	"gender": "male"
+}
 ```
 
 ### Storage
@@ -325,172 +243,31 @@ Working memory is stored in the sessions table `metadata` column as JSONB:
 
 ```sql
 metadata: {
-  "workingMemory": "# User Information\n- **First Name**: Rufaro\n..."
+  "workingMemory": {
+    "name": "Rufaro",
+    "location": "Zimbabwe",
+    "surname": "Mugabe",
+    "gender": "male"
+  }
 }
 ```
 
 ### Agent Integration
 
-Working memory is provided to the agent as **read-only context** at the start of each conversation. To update working memory, the agent must use the **Working Memory Tool** (see [Working Memory Tool Setup](#working-memory-tool-new) below).
-
-**Example Flow:**
-
-```
-Agent receives:
-WORKING_MEMORY (Read-Only):
-# User Information
-- **First Name**:
-- **Location**:
-
-User: "My name is Rufaro and I'm from Zimbabwe"
-
-Agent thinks: "I should update working memory"
-Agent calls: updateWorkingMemory tool with complete updated content
-
-Tool updates database:
-# User Information
-- **First Name**: Rufaro
-- **Location**: Zimbabwe
-
-Agent responds: "Nice to meet you, Rufaro! I'll remember you're from Zimbabwe."
-```
-
-The tool-based approach provides transparency and explicit control over memory updates.
+Working memory is provided to the agent as **read-only context** at the start of each conversation. To update working memory, the agent must use the **Working Memory Tool**
 
 ### Benefits
 
 - 🧠 **Persistent Memory**: Information persists across all conversations in a thread
-- 🚀 **Non-Blocking**: Zero impact on response speed
-- 📝 **Structured**: Markdown templates keep data organized
+- 📝 **Structured**: JSON format provides extensible schema with type safety
 - 🔄 **Automatic**: Agents update memory seamlessly
 - 🎯 **Contextual**: Always available to the agent for better responses
 
 ### Documentation
 
-For detailed information, see:
-
-- [Working Memory Documentation](nodes/MemoryPostgresAdvanced/docs/WORKING_MEMORY.md)
-- [Working Memory Quickstart](docs/WORKING_MEMORY_QUICKSTART.md)
-
-## Working Memory Tool (NEW!)
+## Working Memory Tool
 
 A dedicated tool node that gives AI agents explicit control over working memory through tool calls.
-
-### 🎯 Why Use the Tool?
-
-**Transparency & Control**:
-
-- Tool calls are visible in logs
-- Agent explicitly decides when to update
-- Better debugging and monitoring
-- Cleaner separation of concerns
-
-**Two-Node Architecture**:
-
-```
-[Postgres Memory+] ──> [AI Agent] <── [Working Memory Tool]
-                           ↓
-                       [Response]
-```
-
-### ⚠️ IMPORTANT: Manual Setup Required
-
-**n8n does NOT automatically add tool nodes.** You MUST manually:
-
-1. ✅ Add the **Working Memory Tool** node to your workflow
-2. ✅ Connect it to your **AI Agent** as a tool input
-3. ✅ Configure the same credentials and session settings
-
-### Features
-
-✅ **Explicit Updates** - Agent calls the tool to update working memory  
-✅ **Token Efficient** - Minimal description reduces AI context usage  
-✅ **Auto-configured** - SessionId automatically matches from `$json.sessionId`  
-✅ **Same Credentials** - Uses same Postgres credentials as Memory+ node  
-✅ **Same Database** - Works with Postgres Memory+ sessions table
-
-### 🚀 Quick Setup Guide
-
-#### Step 1: Configure Postgres Memory+ Node
-
-```
-✅ Enable Session Tracking
-✅ Enable Working Memory
-✅ Set Working Memory Template (optional customization)
-```
-
-#### Step 2: Add Working Memory Tool Node
-
-```
-1. Drag "Working Memory Tool" node onto canvas
-2. Configure:
-   • Session ID: {{ $json.sessionId }} (default, auto-configured)
-   • Sessions Table Name: n8n_chat_sessions (must match Memory+ node)
-   • Schema Name: public (must match Memory+ node)
-   • Credentials: Same Postgres credentials as Memory+ node
-```
-
-#### Step 3: Connect to AI Agent
-
-```
-1. Connect Memory+ node output → AI Agent memory input
-2. Connect Working Memory Tool → AI Agent tool input
-3. Done! Agent can now read and update working memory
-```
-
-### 📋 Configuration Checklist
-
-Make sure these match between **Postgres Memory+** and **Working Memory Tool**:
-
-| Setting               | Must Match |
-| --------------------- | ---------- |
-| Postgres Credentials  | ✅ YES     |
-| Schema Name           | ✅ YES     |
-| Sessions Table Name   | ✅ YES     |
-| Session ID expression | ✅ YES     |
-
-**Default values work out of the box** - just ensure both nodes use the same Postgres credentials!
-
-### 🔧 What's Auto-Configured
-
-The Working Memory Tool comes pre-configured with smart defaults:
-
-- ✅ **Session ID**: `{{ $json.sessionId }}` - Automatically matches the session from context
-- ✅ **Schema Name**: `public` - Default Postgres schema
-- ✅ **Sessions Table**: `n8n_chat_sessions` - Default sessions table name
-
-**You only need to:**
-
-1. Select the same Postgres credentials
-2. Connect to AI Agent
-3. Verify table names match (if you customized them)
-
-That's it! The tool is ready to use.
-
-### Example
-
-**User:** "My name is Rufaro and I love soccer"
-
-**Agent:**
-
-```
-[Calls updateWorkingMemory tool]
-Input: {
-  "workingMemory": "# User Information\n- **First Name**: Rufaro\n- **Interests**: Soccer"
-}
-
-Response: "Nice to meet you, Rufaro! Soccer is a great sport."
-```
-
-### Benefits vs Automatic Updates
-
-| Feature           | Automatic (Tags) | Tool-Based      |
-| ----------------- | ---------------- | --------------- |
-| Visibility        | Hidden           | Visible in logs |
-| Control           | Automatic        | Explicit        |
-| Debugging         | Harder           | Easier          |
-| Agent reads first | No               | Yes (optional)  |
-| Transparency      | Low              | High            |
 
 ### Documentation
 
@@ -548,247 +325,6 @@ Enable session tracking to maintain a separate table with conversation metadata.
 
 ## Credentials
 
-This node uses the standard **n8n PostgreSQL credentials**. Configure:
-
-- **Host**: Database server address
-- **Port**: Database port (default: 5432)
-- **Database**: Database name
-- **User**: Database username
-- **Password**: Database password
-- **SSL Options**: Optional SSL/TLS configuration
-
-## Visual Guide
-
-### Node Configuration Examples
-
-#### Basic Setup
-
-The main node configuration allows you to specify schema, table name, and session settings:
-
-![Main Node Configuration](nodes/MemoryPostgresAdvanced/docs/main-node.png)
-
-#### Advanced Setup with Session Tracking
-
-Configure schema isolation and enable session tracking for thread management:
-
-![Schema and Session Configuration](nodes/MemoryPostgresAdvanced/docs/Schema%20and%20session%20defination.png)
-
-## Usage
-
-### Basic Example
-
-1. Add the **Postgres Memory+** node to your workflow
-2. Connect your PostgreSQL credentials
-3. Configure the schema name (e.g., `public`, `ai_memory`, or `tenant_123`)
-   - Schema will be auto-created if it doesn't exist
-4. Set the table name (default: `n8n_chat_histories`)
-   - Table will be auto-created if it doesn't exist
-5. Configure your session key
-6. Connect to an AI Agent node
-
-### Workflow Example
-
-```
-Chat Trigger → AI Agent → Postgres Chat Memory Advanced → Send Response
-```
-
-The memory node will:
-
-1. Connect to your specified schema and table
-2. Load previous conversation history for the session
-3. Provide context to the AI agent
-4. Store new messages after each interaction
-
-### Schema Organization Examples
-
-#### Single Schema (Default)
-
-```
-Schema: public
-Table: n8n_chat_histories
-```
-
-#### Multi-tenant Application
-
-```
-Schema: tenant_{{ $json.tenantId }}
-Table: chat_histories
-Session: {{ $json.userId }}_{{ $json.conversationId }}
-```
-
-#### Organized by Environment
-
-```
-Schema: production_ai
-Table: agent_conversations
-Session: {{ $json.agentId }}_{{ $json.sessionId }}
-```
-
-### With Session Tracking Example
-
-```
-Schema: public
-Table: n8n_chat_histories
-Session Key: {{ $json.sessionId }}
-Context Window: 10
-Options:
-  - Enable Session Tracking: true
-  - Sessions Table Name: chat_sessions
-```
-
-This creates two tables:
-
-- `public.n8n_chat_histories` - Stores actual chat messages
-- `public.chat_sessions` - Stores session metadata for thread management
-
-## Building a Chat Interface
-
-When session tracking is enabled, you can build a complete chat interface:
-
-### 1. List All Conversations
-
-```sql
-SELECT
-  id,
-  title,
-  last_message,
-  timestamp,
-  message_count
-FROM public.n8n_chat_sessions
-ORDER BY timestamp DESC
-LIMIT 20;
-```
-
-### 2. Load Specific Conversation
-
-```sql
-SELECT message, created_at
-FROM public.n8n_chat_histories
-WHERE session_id = '{{ $json.sessionId }}'
-ORDER BY created_at ASC;
-```
-
-### 3. Search Conversations
-
-```sql
-SELECT id, title, last_message, timestamp
-FROM public.n8n_chat_sessions
-WHERE title ILIKE '%{{ $json.searchQuery }}%'
-   OR last_message ILIKE '%{{ $json.searchQuery }}%'
-ORDER BY timestamp DESC;
-```
-
-## Best Practices
-
-### Schema Organization
-
-- Use separate schemas for different environments (dev, staging, prod)
-- Consider schema-per-tenant for multi-tenant applications
-- Use descriptive schema names
-
-### Session Key Strategy
-
-- Include user identifiers in session keys
-- Consider adding conversation IDs for multiple concurrent chats
-- Use delimiters (\_, -, /) for clarity
-
-### Context Window
-
-- Start with 5-10 messages for general conversations
-- Increase to 20-50 for complex, context-heavy discussions
-- Balance database size vs. context quality
-
-### Performance
-
-- Session tracking updates happen asynchronously (non-blocking)
-- No impact on agent response time
-- Connection pooling for efficiency
-- Automatic indexes on frequently queried columns
-
-### Security
-
-- Use SSL/TLS for production connections
-- Implement proper database user permissions
-- Consider row-level security for multi-tenant scenarios
-
-## Troubleshooting
-
-### Connection Issues
-
-- Verify PostgreSQL credentials
-- Check network connectivity and firewall rules
-- Ensure PostgreSQL allows connections from n8n server
-
-### Schema Not Found
-
-- Verify schema exists or check auto-creation permissions
-- Create schema manually: `CREATE SCHEMA schema_name;`
-- Check user permissions: `GRANT USAGE ON SCHEMA schema_name TO user;`
-
-### Memory Not Persisting
-
-- Verify session key is consistent across requests
-- Check table has data: `SELECT * FROM schema_name.table_name;`
-- Ensure context window is not set too low
-
-## Performance Impact
-
-### Agent Speed
-
-**Without Semantic Search:**
-
-- **Instant loading** - Direct database query for recent messages
-- **No overhead** - Standard memory node performance
-
-**With Semantic Search (Smart Activation):**
-
-- **Storage is non-blocking** - Messages are embedded in the background, zero impact
-- **Context window not full** - Zero overhead, instant response (uses regular memory only)
-- **Context window full** - Semantic search activates (~150-800ms depending on vector store)
-- **Zero-cost detection** - Uses already-loaded messages, no extra database queries
-- **Token-optimized** - Minimal context overhead (90% reduction vs traditional methods)
-
-### Performance Examples
-
-**Example 1: New Conversation (5 messages, window size: 10)**
-
-```
-Query Time: ~50ms (regular memory only)
-Semantic Search: Skipped (window not full)
-Total: ~50ms ⚡
-```
-
-**Example 2: Long Conversation (100 messages, window size: 10)**
-
-```
-Query Time: ~50ms (regular memory) + ~200-500ms (semantic search)
-Semantic Search: Active (retrieves relevant older messages)
-Total: ~250-550ms 📚
-```
-
-### How It Works
-
-**Without Semantic Search:**
-
-```
-User Message → Load recent history → Agent responds
-```
-
-**With Semantic Search:**
-
-```
-User Message → Load recent history + Semantic search → Agent responds
-               (fast ~50ms)          (adds ~200-500ms)   (with better context)
-                                           ↓
-                     Background: Store embedding (non-blocking)
-```
-
-**Session Tracking (Always Non-blocking):**
-
-```
-Agent Response → Update session metadata in background (async)
-```
-
 ## Comparison with Standard Node
 
 | Feature            | Standard Node | Advanced Node |
@@ -801,25 +337,6 @@ Agent Response → Update session metadata in background (async)
 | Auto Schema/Table  | ❌            | ✅            |
 | Performance Impact | None          | None          |
 
-## Development
-
-```bash
-# Install dependencies
-npm install
-
-# Build the node
-npm run build
-
-# Run in development mode
-npm run dev
-
-# Lint code
-npm run lint
-
-# Fix linting issues
-npm run lintfix
-```
-
 ## Migration from Standard Node
 
 To migrate from the standard Postgres Chat Memory node:
@@ -829,62 +346,3 @@ To migrate from the standard Postgres Chat Memory node:
 3. Add the schema name field (default: `public`)
 4. Keep all other settings the same
 5. Test thoroughly in a development environment
-
-## Changelog
-
-### Version 2.1.0 (Latest)
-
-**🚀 Performance Optimizations**
-
-- ✅ Parallel query loading (50-70% faster database operations)
-- ✅ Optimized working memory queries with primary key indexes
-- ✅ Non-blocking session metadata updates with `setImmediate()`
-- ✅ Parallel schema and table creation on startup
-- ✅ Removed caching in favor of efficient queries
-
-**🐛 Bug Fixes**
-
-- ✅ Fixed linting errors in WorkingMemoryTool node
-- ✅ Updated credential references to use proper `postgresApi` naming
-- ✅ Improved error handling with proper n8n error types
-
-**📚 Documentation**
-
-- ✅ Added comprehensive performance optimization guide
-- ✅ Updated README with performance benchmarks
-- ✅ Clarified Session Tracking is optional for UI purposes only
-
-### Version 2.0.0
-
-**🎯 Major Features**
-
-- ✅ Semantic Search with dynamic node shape
-- ✅ Working Memory (Mastra-inspired)
-- ✅ Working Memory Tool node
-- ✅ Token-optimized context injection
-- ✅ Smart semantic search activation
-
-### Version 1.2.0
-
-- ✅ Expression support for session keys
-- ✅ Enhanced session management
-
-### Version 1.1.0
-
-- ✅ Context window length configuration
-- ✅ BufferWindowMemory support
-
-### Version 1.0.0
-
-- ✅ Initial release with schema support
-- ✅ Auto schema and table creation
-- ✅ Session tracking
-
-## Resources
-
-- [n8n community nodes documentation](https://docs.n8n.io/integrations/community-nodes/)
-- [LangChain PostgreSQL Memory](https://js.langchain.com/docs/modules/memory/integrations/postgres)
-
-## License
-
-[MIT](LICENSE.md)

@@ -40,7 +40,7 @@ interface PostgresNodeCredentials {
 // Helper function to configure Postgres pool
 async function configurePostgresPool(credentials: PostgresNodeCredentials): Promise<pg.Pool> {
 	const pg = await import('pg');
-	
+
 	const config: pg.PoolConfig = {
 		host: credentials.host,
 		port: credentials.port,
@@ -78,7 +78,7 @@ async function ensureSessionsTableExists(
 	tableName: string,
 ): Promise<void> {
 	const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}"` : `"${tableName}"`;
-	
+
 	const createTableQuery = `
 		CREATE TABLE IF NOT EXISTS ${qualifiedTableName} (
 			id VARCHAR(255) PRIMARY KEY,
@@ -91,15 +91,15 @@ async function ensureSessionsTableExists(
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)
 	`;
-	
+
 	await pool.query(createTableQuery);
-	
+
 	// Create index for faster queries
 	const createIndexQuery = `
 		CREATE INDEX IF NOT EXISTS idx_${tableName}_timestamp 
 		ON ${qualifiedTableName}(timestamp DESC)
 	`;
-	
+
 	await pool.query(createIndexQuery);
 }
 
@@ -113,13 +113,26 @@ async function updateSessionMetadata(
 	workingMemoryTemplate?: string,
 ): Promise<void> {
 	const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}"` : `"${tableName}"`;
-	
+
 	// Generate title from first 50 characters of the first message (if new session)
 	const title = lastMessage.substring(0, 50) + (lastMessage.length > 50 ? '...' : '');
-	
+
 	// Initialize metadata with working memory template ONLY on new sessions
-	const metadata = workingMemoryTemplate ? { workingMemory: workingMemoryTemplate } : {};
-	
+	let metadata = {};
+	if (workingMemoryTemplate) {
+		try {
+			// Parse the JSON template
+			const parsedTemplate = typeof workingMemoryTemplate === 'string'
+				? JSON.parse(workingMemoryTemplate)
+				: workingMemoryTemplate;
+			metadata = { workingMemory: parsedTemplate };
+		} catch (error) {
+			// Fallback to empty object if template is invalid
+			console.warn('Invalid working memory template JSON, using empty object:', error);
+			metadata = { workingMemory: {} };
+		}
+	}
+
 	// Optimized query: only update essential fields on conflict (skip metadata updates for performance)
 	const upsertQuery = `
 		INSERT INTO ${qualifiedTableName} (id, title, last_message, timestamp, message_count, metadata)
@@ -131,7 +144,7 @@ async function updateSessionMetadata(
 			message_count = ${qualifiedTableName}.message_count + 1,
 			updated_at = NOW()
 	`;
-	
+
 	await pool.query(upsertQuery, [sessionId, title, lastMessage, JSON.stringify(metadata)]);
 }
 
@@ -142,17 +155,17 @@ async function getWorkingMemory(
 	schemaName: string,
 	tableName: string,
 	sessionId: string,
-): Promise<string | null> {
+): Promise<any | null> {
 	const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}"` : `"${tableName}"`;
-	
-	// Optimized query: Primary key lookup (fast), extracts only workingMemory field from JSONB
+
+	// Optimized query: Primary key lookup (fast), extracts workingMemory as JSON object
 	const query = `
-		SELECT metadata->>'workingMemory' as working_memory
+		SELECT metadata->'workingMemory' as working_memory
 		FROM ${qualifiedTableName}
 		WHERE id = $1
 		LIMIT 1
 	`;
-	
+
 	const result = await pool.query(query, [sessionId]);
 	return result.rows[0]?.working_memory || null;
 }
@@ -168,14 +181,14 @@ export class MemoryPostgresAdvanced implements INodeType {
 		defaults: {
 			name: 'Postgres Memory+',
 		},
-		   credentials: [
-			   {
-				   name: 'postgres',
-				   required: true,
-				   testedBy: 'postgresConnectionTest',
-				   // n8n built-in Postgres credential type is referenced by name only
-			   },
-		   ],
+		credentials: [
+			{
+				name: 'postgres',
+				required: true,
+				testedBy: 'postgresConnectionTest',
+				// n8n built-in Postgres credential type is referenced by name only
+			},
+		],
 		codex: {
 			categories: ['AI'],
 			subcategories: {
@@ -303,21 +316,22 @@ export class MemoryPostgresAdvanced implements INodeType {
 					{
 						displayName: 'Working Memory Template',
 						name: 'workingMemoryTemplate',
-						type: 'string',
+						type: 'json',
 						typeOptions: {
 							rows: 10,
 						},
-						default: `# User Information
-- **First Name**: 
-- **Last Name**: 
-- **Location**: 
-- **Occupation**: 
-- **Interests**: 
-- **Goals**: 
-- **Events**: 
-- **Facts**: 
-- **Projects**: `,
-						description: 'Markdown template for working memory. The agent will update this with persistent user information.',
+						default: `{
+  "name": "",
+  "location": "",
+  "occupation": "",
+  "interests": [],
+  "goals": [],
+  "events": [],
+  "facts": [],
+  "projects": [],
+  "preferences": {}
+}`,
+						description: 'JSON template for working memory base structure. Agent can extend this with additional fields (surname, gender, age, etc.) as needed. Provides structured foundation with extensibility.',
 						displayOptions: {
 							show: {
 								enableWorkingMemory: [true],
@@ -340,7 +354,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 				credential: ICredentialsDecrypted,
 			): Promise<INodeCredentialTestResult> {
 				const credentials = credential.data as unknown as PostgresNodeCredentials;
-				
+
 				try {
 					const pool = await configurePostgresPool(credentials);
 					const client = await pool.connect();
@@ -367,7 +381,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 		const schemaName = this.getNodeParameter('schemaName', itemIndex, 'public') as string;
 		const tableName = this.getNodeParameter('tableName', itemIndex, 'n8n_chat_histories') as string;
 		const sessionId = getSessionId(this, itemIndex);
-		
+
 		// Get options
 		const options = this.getNodeParameter('options', itemIndex, {}) as {
 			enableSessionTracking?: boolean;
@@ -384,26 +398,27 @@ export class MemoryPostgresAdvanced implements INodeType {
 		const topK = options.topK || 3;
 		const messageRange = options.messageRange || 2;
 		const enableWorkingMemory = options.enableWorkingMemory || false;
-		const workingMemoryTemplate = options.workingMemoryTemplate || `# User Information
-- **First Name**: 
-- **Last Name**: 
-- **Location**: 
-- **Occupation**: 
-- **Interests**: 
-- **Goals**: 
-- **Events**: 
-- **Facts**: 
-- **Projects**: `;
+		const workingMemoryTemplate = options.workingMemoryTemplate || `{
+  "name": "",
+  "location": "",
+  "occupation": "",
+  "interests": [],
+  "goals": [],
+  "events": [],
+  "facts": [],
+  "projects": [],
+  "preferences": {}
+}`;
 
 		// Get connected vector store for semantic search
 		let vectorStore: any = null;
-		
+
 		if (enableSemanticSearch) {
 			this.logger.info('Semantic search enabled - checking for connected inputs...');
 			const vectorStoreInput = (await this.getInputConnectionData(NodeConnectionTypes.AiVectorStore, 0)) as any;
-			
+
 			this.logger.info(`Vector Store input: ${vectorStoreInput ? 'CONNECTED' : 'NOT CONNECTED'}`);
-			
+
 			// Validate that vector store is connected when semantic search is enabled
 			if (!vectorStoreInput) {
 				throw new NodeOperationError(
@@ -411,7 +426,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 					'Semantic search is enabled but Vector Store input is not connected. Please connect a Vector Store or disable semantic search.'
 				);
 			}
-			
+
 			// Extract vector store
 			vectorStore = Array.isArray(vectorStoreInput) ? vectorStoreInput[0] : vectorStoreInput;
 			this.logger.info('Vector Store instance obtained');
@@ -419,7 +434,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 			if (vectorStore && typeof vectorStore === 'object') {
 				this.logger.info(`Vector Store methods: ${Object.getOwnPropertyNames(Object.getPrototypeOf(vectorStore)).join(', ')}`);
 			}
-			
+
 			this.logger.info('✅ Semantic search configured - using vector store\'s internal embedding model');
 		} else {
 			this.logger.info('Semantic search is DISABLED');
@@ -466,27 +481,27 @@ export class MemoryPostgresAdvanced implements INodeType {
 		if (enableSessionTracking || enableSemanticSearch) {
 			const originalAddMessage = pgChatHistory.addMessage.bind(pgChatHistory);
 			pgChatHistory.addMessage = async (message: any) => {
-				const messageContent = typeof message.content === 'string' 
-					? message.content 
+				const messageContent = typeof message.content === 'string'
+					? message.content
 					: JSON.stringify(message.content);
-				
+
 				// Add the message to history
 				await originalAddMessage(message);
-				
+
 				// Update session metadata (non-blocking - fire and forget)
 				// NOTE: This is purely for UI/tracking purposes (sessions list with titles, timestamps).
 				// It does NOT affect memory functionality. Disable "Session Tracking" if not needed.
 				if (enableSessionTracking) {
 					// Use setImmediate to defer execution and avoid any blocking
 					setImmediate(() => {
-						updateSessionMetadata(pool, schemaName, sessionsTableName, sessionId, messageContent, 
+						updateSessionMetadata(pool, schemaName, sessionsTableName, sessionId, messageContent,
 							enableWorkingMemory ? workingMemoryTemplate : undefined)
 							.catch((error) => {
 								this.logger.warn(`Could not update session metadata: ${error.message}`);
 							});
 					});
 				}
-				
+
 				// Store embedding in vector store (non-blocking - fire and forget)
 				if (enableSemanticSearch && vectorStore) {
 					(async () => {
@@ -529,56 +544,91 @@ export class MemoryPostgresAdvanced implements INodeType {
 		if (enableWorkingMemory || enableSemanticSearch) {
 			const originalLoadMemoryVariables = memory.loadMemoryVariables.bind(memory);
 			const contextWindowLength = this.getNode().typeVersion < 1.1 ? Infinity : (kOptions.k as number);
-			
+
 			memory.loadMemoryVariables = async (values: any) => {
 				this.logger.info(`loadMemoryVariables called with values: ${JSON.stringify(values)}`);
-				
+
 				// ⚡ PERFORMANCE OPTIMIZATION: Load chat history and working memory in parallel
 				const loadPromises: Promise<any>[] = [
 					originalLoadMemoryVariables(values), // Load chat history
 				];
-				
+
 				// Add working memory fetch to parallel batch if enabled
 				if (enableWorkingMemory && enableSessionTracking) {
 					loadPromises.push(
 						getWorkingMemory(pool, schemaName, sessionsTableName, sessionId)
 					);
 				}
-				
+
 				// Execute all queries in parallel (huge performance boost!)
 				const results = await Promise.all(loadPromises);
 				const regularMemory = results[0];
 				const workingMemory = enableWorkingMemory && enableSessionTracking ? results[1] : null;
-				
+
 				this.logger.info(`✅ Parallel load complete - Chat history and working memory loaded simultaneously`);
-				
+
 				// Inject working memory at the beginning (if enabled and session tracking is enabled)
 				if (enableWorkingMemory && enableSessionTracking && regularMemory.chat_history && Array.isArray(regularMemory.chat_history)) {
 					try {
 						// Use template if no existing working memory
-						const workingMemoryData = workingMemory || workingMemoryTemplate;
-						
+						let workingMemoryData = workingMemory;
+						if (!workingMemoryData) {
+							// Parse the template as JSON
+							try {
+								workingMemoryData = typeof workingMemoryTemplate === 'string'
+									? JSON.parse(workingMemoryTemplate)
+									: workingMemoryTemplate;
+							} catch (error) {
+								this.logger.warn('Invalid working memory template JSON, using empty object');
+								workingMemoryData = {};
+							}
+						}
+
 						const { SystemMessage } = await import('@langchain/core/messages');
-						
-						// Create system message with working memory (read-only)
+
+						// Create system message with working memory as structured JSON
 						// Note: Update instructions are provided by the Working Memory Tool node
 						const workingMemoryContent = `WORKING_MEMORY: Persistent user information across conversations.
 
-${workingMemoryData}
+Current Memory (JSON format):
+\`\`\`json
+${JSON.stringify(workingMemoryData, null, 2)}
+\`\`\`
 
-UPDATE WHEN: User shares personal details (name, location, job, preferences, goals, events, facts, projects, relationships, etc.)
-HOW: Use Working Memory Tool. Keep ALL fields (even empty), update relevant ones, or add new fields. Always send COMPLETE memory.`;
-						
+UPDATE INSTRUCTIONS:
+When user shares personal information, use Working Memory Tool with this EXACT approach:
+
+1. START with the current memory object above
+2. UPDATE existing fields with new data (keep empty "" if no data)
+3. ADD new fields for any additional information (surname, gender, age, etc.)
+4. SEND the complete merged object
+
+EXAMPLE - If user says "My name is John Smith and I'm male":
+- Keep ALL existing fields from current memory
+- Update "name": "John" 
+- ADD "surname": "Smith"
+- ADD "gender": "male"
+- Send complete object with ALL original fields + new fields
+
+CRITICAL RULES:
+✅ ALWAYS include ALL fields from current memory
+✅ ADD new fields for additional info (surname, gender, age, phone, etc.)
+✅ Keep empty values ("", []) until real data is available
+❌ NEVER remove or omit existing fields
+❌ NEVER send partial objects
+
+The goal is EXTENSIBLE SCHEMA: structured base + dynamic field addition as users share more information.`;
+
 						const workingMemoryMessage = new SystemMessage(workingMemoryContent);
-						
+
 						// Inject at the beginning of chat history
 						regularMemory.chat_history.unshift(workingMemoryMessage);
-						this.logger.info('✅ Working memory injected into context');
+						this.logger.info('✅ Working memory injected into context as structured JSON');
 					} catch (error: any) {
 						this.logger.warn(`Could not load working memory: ${error.message}`);
 					}
 				}
-				
+
 				// Perform semantic search if enabled
 				if (enableSemanticSearch && vectorStore) {
 					// Check if context window is full by looking at loaded messages
@@ -586,15 +636,15 @@ HOW: Use Working Memory Tool. Keep ALL fields (even empty), update relevant ones
 					const loadedMessages = regularMemory.chat_history || [];
 					const loadedCount = Array.isArray(loadedMessages) ? loadedMessages.length : 0;
 					const isWindowFull = loadedCount >= contextWindowLength;
-					
+
 					this.logger.info(`Loaded messages: ${loadedCount}, Context window: ${contextWindowLength}, Window full: ${isWindowFull}`);
-					
+
 					// Only perform semantic search if context window is full (meaning there are older messages not in recent context)
 					if (isWindowFull) {
 						// Perform semantic search if there's an input query
 						const inputText = values.input || values.question || '';
 						this.logger.info(`Input text for semantic search: "${inputText}"`);
-						
+
 						if (inputText && typeof inputText === 'string') {
 							try {
 								// Use the vector store's internal similarity search and embedding model
@@ -603,43 +653,43 @@ HOW: Use Working Memory Tool. Keep ALL fields (even empty), update relevant ones
 									inputText,
 									topK * 3 // Get more results to filter by session
 								);
-								
+
 								// Filter results by sessionId and take top K
 								const results = allResults
 									.filter((result: any) => result[0].metadata?.sessionId === sessionId)
 									.slice(0, topK);
-								
+
 								// Log semantic search results for debugging
 								this.logger.info(`Semantic search found ${results.length} similar messages (from ${allResults.length} total)`);
 								if (results.length > 0) {
 									this.logger.info(`Top match: "${results[0][0].pageContent.substring(0, 50)}..." (score: ${results[0][1]})`);
 								}
-								
+
 								// Retrieve and inject relevant messages directly into chat history
 								if (results.length > 0 && regularMemory.chat_history && Array.isArray(regularMemory.chat_history)) {
 									// Get all messages from chat history
 									const allMessages = await pgChatHistory.getMessages();
 									const retrievedMessages: any[] = [];
 									const seenIndices = new Set<number>();
-									
+
 									for (const result of results) {
 										const matchedContent = result[0].pageContent;
-										
+
 										// Find the index of this message in the full history
 										const matchIndex = allMessages.findIndex(
 											(msg: any) => {
-												const content = typeof msg.content === 'string' 
-													? msg.content 
+												const content = typeof msg.content === 'string'
+													? msg.content
 													: JSON.stringify(msg.content);
 												return content === matchedContent;
 											}
 										);
-										
+
 										if (matchIndex !== -1) {
 											// Calculate the range boundaries
 											const startIdx = Math.max(0, matchIndex - messageRange);
 											const endIdx = Math.min(allMessages.length - 1, matchIndex + messageRange);
-											
+
 											// Collect messages in range, avoiding duplicates
 											for (let i = startIdx; i <= endIdx; i++) {
 												if (!seenIndices.has(i)) {
@@ -649,7 +699,7 @@ HOW: Use Working Memory Tool. Keep ALL fields (even empty), update relevant ones
 											}
 										}
 									}
-									
+
 									// Sort by original order and inject at the beginning with clear demarcation
 									if (retrievedMessages.length > 0) {
 										const { SystemMessage } = await import('@langchain/core/messages');
@@ -671,7 +721,7 @@ HOW: Use Working Memory Tool. Keep ALL fields (even empty), update relevant ones
 						this.logger.info('Context window not full - skipping semantic search for better performance');
 					}
 				}
-				
+
 				return regularMemory;
 			};
 		}
