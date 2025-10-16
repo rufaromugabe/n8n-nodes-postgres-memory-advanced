@@ -85,9 +85,7 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
 | **Top K Results**           | number  | `3`                      | Number of semantically similar messages to retrieve                                |
 | **Message Range**           | number  | `2`                      | Context messages before/after each semantic match                                  |
 
-## Semantic Search (NEW in v2.0!)
-
-### 🎯 Revolutionary Features
+## Semantic Search
 
 ### How It Works
 
@@ -100,18 +98,12 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
    - Long conversations: Automatically retrieves relevant older messages
 6. **Natural Injection**: Retrieved messages are injected as actual conversation history
 
-### Setup Example
-
-```
-
 ### Configuration
 
 | Option            | Description                                              |
 | ----------------- | -------------------------------------------------------- |
 | **Top K Results** | Number of similar past messages to retrieve (default: 3) |
 | **Message Range** | Include N messages before/after each match (default: 2)  |
-
-
 
 ### Benefits
 
@@ -120,9 +112,7 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
 - 🎯 **Context-aware**: Returns surrounding messages for better understanding
 - ⚡ **Zero Overhead**: No performance impact when context window isn't full
 - 🎯 **Smart Activation**: Only searches when there are older messages beyond recent context
-- 💰 **Token Efficient**: 90% reduction in context overhead
 - 🔌 **Simple Setup**: Only need Vector Store
-
 
 ### Supported Vector Stores
 
@@ -145,16 +135,11 @@ The node automatically creates:
 2. **Chat history table** if it doesn't exist in the specified schema
 3. **Sessions table** if session tracking is enabled and table doesn't exist
 
-**Requirements:**
-
-- For schema creation: Database user needs `CREATE SCHEMA` permission
-- For table creation: Database user needs `CREATE TABLE` permission in the schema
-
-
+**Requirements:** Database user needs `CREATE SCHEMA` and `CREATE TABLE` permissions
 
 ## Working Memory
 
-> **⚠️ IMPORTANT:** Working Memory requires the **Working Memory Tool** node to be **manually added and connected** to your AI Agent. below for configuration instructions.
+> **⚠️ IMPORTANT:** Working Memory requires the **Working Memory Tool** node to be **manually added and connected** to your AI Agent.
 
 This feature allows agents to maintain persistent, structured information about users across conversations using an extensible JSON schema approach.
 
@@ -174,7 +159,6 @@ Working memory is like the agent's scratchpad - it stores long-term user informa
 2. **Add Tool Node**: Manually add **Working Memory Tool** node and connect to AI Agent
 3. **Customize Template**: Define the structure of information you want to track
 4. **Agent Updates**: Agent uses the Working Memory Tool to update persistent information
-
 
 ### Complete Workflow Setup
 
@@ -205,7 +189,7 @@ Working memory is like the agent's scratchpad - it stores long-term user informa
 │ Response Output │
 └─────────────────────┘
 
-````
+```
 
 ### Example Usage
 
@@ -220,7 +204,7 @@ Working memory is like the agent's scratchpad - it stores long-term user informa
 	"goals": [],
 	"preferences": {}
 }
-````
+```
 
 **After Conversation:**
 
