@@ -219,7 +219,6 @@ export class WorkingMemoryTool implements INodeType {
 						type: 'string',
 						default: '={{ $json.userId }}',
 						description: 'Optional user identifier for user-scoped working memory. Leave empty for thread-scoped memory.',
-						required: false,
 					},
 					{
 						displayName: 'Working Memory Scope',

@@ -377,19 +377,6 @@ export class MemoryPostgresAdvanced implements INodeType {
 						},
 					},
 					{
-						displayName: 'User ID',
-						name: 'userId',
-						type: 'string',
-						default: '={{ $json.userId }}',
-						description: 'Optional user identifier for session tracking and working memory scoping. Leave empty if not needed.',
-						required: false,
-						displayOptions: {
-							show: {
-								enableSessionTracking: [true],
-							},
-						},
-					},
-					{
 						displayName: 'Top K Results',
 						name: 'topK',
 						type: 'number',
@@ -398,6 +385,18 @@ export class MemoryPostgresAdvanced implements INodeType {
 						displayOptions: {
 							show: {
 								enableSemanticSearch: [true],
+							},
+						},
+					},
+					{
+						displayName: 'User ID',
+						name: 'userId',
+						type: 'string',
+						default: '={{ $json.userId }}',
+						description: 'Optional user identifier for session tracking and working memory scoping. Leave empty if not needed.',
+						displayOptions: {
+							show: {
+								enableSessionTracking: [true],
 							},
 						},
 					},
