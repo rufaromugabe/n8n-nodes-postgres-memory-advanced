@@ -93,6 +93,8 @@ async function updateWorkingMemory(
 	sessionsTableName: string,
 	sessionId: string,
 	workingMemory: any,
+	scope: 'thread' | 'user' = 'thread',
+	userId?: string,
 ): Promise<{ success: boolean; error?: string }> {
 	// Validate the working memory content
 	const validation = validateWorkingMemory(workingMemory);
@@ -100,16 +102,29 @@ async function updateWorkingMemory(
 		return { success: false, error: validation.error };
 	}
 
-	const query = `
-		UPDATE ${schemaName ? `"${schemaName}".` : ''}"${sessionsTableName}"
-		SET metadata = jsonb_set(COALESCE(metadata, '{}'::jsonb), '{workingMemory}', $2::jsonb, true),
-			updated_at = NOW()
-		WHERE id = $1
-	`;
-
 	try {
-		// Store the validated JSON content
-		await pool.query(query, [sessionId, JSON.stringify(validation.parsed)]);
+		if (scope === 'user' && userId) {
+			// User-scoped: Update working memory in dedicated user memory table (SCALABLE!)
+			const qualifiedUserMemoryTable = schemaName ? `"${schemaName}"."${sessionsTableName}_user_memory"` : `"${sessionsTableName}_user_memory"`;
+			const query = `
+				INSERT INTO ${qualifiedUserMemoryTable} (user_id, working_memory, updated_at)
+				VALUES ($1, $2::jsonb, NOW())
+				ON CONFLICT (user_id)
+				DO UPDATE SET 
+					working_memory = EXCLUDED.working_memory,
+					updated_at = NOW()
+			`;
+			await pool.query(query, [userId, JSON.stringify(validation.parsed)]);
+		} else {
+			// Thread-scoped: Update working memory for specific session
+			const query = `
+				UPDATE ${schemaName ? `"${schemaName}".` : ''}"${sessionsTableName}"
+				SET working_memory = $2::jsonb,
+					updated_at = NOW()
+				WHERE id = $1
+			`;
+			await pool.query(query, [sessionId, JSON.stringify(validation.parsed)]);
+		}
 		return { success: true };
 	} catch (error: any) {
 		return { success: false, error: `Database update failed: ${error.message}` };
@@ -123,7 +138,7 @@ export class WorkingMemoryTool implements INodeType {
 		icon: 'file:postgresql.svg',
 		group: ['transform'],
 		version: 2,
-		description: 'Update working memory with new information. Uses EXTENSIBLE SCHEMA: preserve template structure + add new fields as needed. Always send complete JSON object with all existing fields plus any new ones.',
+		description: 'Update working memory with new information. Always send complete JSON object with all existing fields plus any new ones.',
 		defaults: {
 			name: 'Working Memory',
 		},
@@ -166,7 +181,7 @@ export class WorkingMemoryTool implements INodeType {
 				},
 			},
 			{
-				displayName: 'AI Agent Tool: Updates persistent user working memory .',
+				displayName: 'AI Agent Tool: Updates persistent user working memory.',
 				name: 'toolOnlyNotice',
 				type: 'notice',
 				default: '',
@@ -176,7 +191,7 @@ export class WorkingMemoryTool implements INodeType {
 				name: 'workingMemory',
 				type: 'json',
 				default: '={{ $json.workingMemory }}',
-				description: 'Complete working memory as JSON object. EXTENSIBLE SCHEMA: Base template provides structure, but you can add ANY new fields (surname, gender, age, phone, etc.). Always include ALL current fields + new ones. This gives structure with flexibility.',
+				description: 'Complete working memory as JSON object. Base template provides structure, but you can add new fields (surname, gender, age, phone, etc.). Always include ALL current fields plus new ones.',
 				typeOptions: {
 					rows: 10,
 				},
@@ -190,6 +205,42 @@ export class WorkingMemoryTool implements INodeType {
 				default: '={{ $json.sessionId }}',
 				description: 'The session ID to store working memory for. Should match the Postgres Memory+ node session ID.',
 				required: true,
+			},
+			{
+				displayName: 'User Options',
+				name: 'userOptions',
+				type: 'collection',
+				placeholder: 'Add User Option',
+				default: {},
+				options: [
+					{
+						displayName: 'User ID',
+						name: 'userId',
+						type: 'string',
+						default: '={{ $json.userId }}',
+						description: 'Optional user identifier for user-scoped working memory. Leave empty for thread-scoped memory.',
+						required: false,
+					},
+					{
+						displayName: 'Working Memory Scope',
+						name: 'workingMemoryScope',
+						type: 'options',
+						options: [
+							{
+								name: 'Thread-Scoped',
+								value: 'thread',
+								description: 'Working memory is isolated per conversation thread',
+							},
+							{
+								name: 'User-Scoped',
+								value: 'user',
+								description: 'Working memory persists across all threads for the same user (requires User ID)',
+							},
+						],
+						default: 'thread',
+						description: 'Choose how working memory is scoped - per thread or per user. Must match Postgres Memory+ node setting.',
+					},
+				],
 			},
 			{
 				displayName: 'Schema Name',
@@ -246,6 +297,15 @@ export class WorkingMemoryTool implements INodeType {
 			try {
 				const credentials = await this.getCredentials<PostgresNodeCredentials>('postgres');
 				const sessionId = this.getNodeParameter('sessionId', i) as string;
+
+				// Get user options
+				const userOptions = this.getNodeParameter('userOptions', i, {}) as {
+					userId?: string;
+					workingMemoryScope?: 'thread' | 'user';
+				};
+				const userId = userOptions.userId || '';
+				const workingMemoryScope = userOptions.workingMemoryScope || 'thread';
+
 				const schemaName = this.getNodeParameter('schemaName', i, 'public') as string;
 				const sessionsTableName = this.getNodeParameter('sessionsTableName', i, 'n8n_chat_sessions') as string;
 				const workingMemoryContent = this.getNodeParameter('workingMemory', i);
@@ -253,6 +313,11 @@ export class WorkingMemoryTool implements INodeType {
 				// Validate working memory content
 				if (!workingMemoryContent) {
 					throw new NodeOperationError(this.getNode(), 'Working memory content is required');
+				}
+
+				// Validate user-scoped memory requirements
+				if (workingMemoryScope === 'user' && !userId) {
+					throw new NodeOperationError(this.getNode(), 'User ID is required for user-scoped working memory');
 				}
 
 				// Validate JSON content
@@ -266,33 +331,33 @@ export class WorkingMemoryTool implements INodeType {
 					console.warn(`Working Memory Warning: ${validation.warning}`);
 				}
 
-				// Fire and forget - update in background
+				// Update working memory in background
 				configurePostgresPool(credentials)
 					.then(async (pool) => {
 						try {
-							const result = await updateWorkingMemory(pool, schemaName, sessionsTableName, sessionId, validation.parsed);
+							const result = await updateWorkingMemory(pool, schemaName, sessionsTableName, sessionId, validation.parsed, workingMemoryScope, userId || undefined);
 							if (!result.success) {
-								console.error('Background working memory update failed:', result.error);
+								console.error('Working memory update failed:', result.error);
 							}
 						} catch (error) {
-							// Log error but don't throw (background operation)
-							console.error('Background working memory update failed:', error);
+							console.error('Working memory update failed:', error);
 						} finally {
-							// Clean up pool
 							pool.end().catch(() => { });
 						}
 					})
 					.catch((error) => {
-						console.error('Failed to configure pool for background update:', error);
+						console.error('Failed to configure database pool:', error);
 					});
 
-				// Respond immediately without waiting for DB operation
+				// Respond immediately
 				returnData.push({
 					json: {
 						success: true,
 						sessionId,
+						userId: userId || null,
+						scope: workingMemoryScope,
 						format: 'json',
-						result: `Working memory (JSON) update queued for session: ${sessionId}`,
+						result: `Working memory (${workingMemoryScope}-scoped) update queued for ${workingMemoryScope === 'user' ? `user: ${userId}` : `session: ${sessionId}`}`,
 						storedContent: validation.parsed,
 						async: true,
 					},

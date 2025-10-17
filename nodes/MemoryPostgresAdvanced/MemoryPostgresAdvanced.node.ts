@@ -71,8 +71,8 @@ async function configurePostgresPool(credentials: PostgresNodeCredentials): Prom
 	return new pg.Pool(config);
 }
 
-// Helper function to create sessions table
-async function ensureSessionsTableExists(
+// Create sessions table with required columns and indexes
+async function createSessionsTable(
 	pool: pg.Pool,
 	schemaName: string,
 	tableName: string,
@@ -82,11 +82,43 @@ async function ensureSessionsTableExists(
 	const createTableQuery = `
 		CREATE TABLE IF NOT EXISTS ${qualifiedTableName} (
 			id VARCHAR(255) PRIMARY KEY,
+			user_id VARCHAR(255),
 			title TEXT NOT NULL,
 			last_message TEXT,
 			timestamp TIMESTAMPTZ DEFAULT NOW(),
 			message_count INTEGER DEFAULT 0,
-			metadata JSONB DEFAULT '{}'::jsonb,
+			working_memory JSONB DEFAULT '{}'::jsonb,
+			created_at TIMESTAMPTZ DEFAULT NOW(),
+			updated_at TIMESTAMPTZ DEFAULT NOW()
+		)
+	`;
+
+	await pool.query(createTableQuery);
+
+	// Create indexes for faster queries
+	const createIndexQueries = [
+		`CREATE INDEX IF NOT EXISTS idx_${tableName}_timestamp ON ${qualifiedTableName}(timestamp DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_${tableName}_user_id ON ${qualifiedTableName}(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_${tableName}_user_timestamp ON ${qualifiedTableName}(user_id, timestamp DESC)`
+	];
+
+	for (const indexQuery of createIndexQueries) {
+		await pool.query(indexQuery);
+	}
+}
+
+// Create user memory table for persistent user data
+async function createUserMemoryTable(
+	pool: pg.Pool,
+	schemaName: string,
+	tableName: string,
+): Promise<void> {
+	const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}_user_memory"` : `"${tableName}_user_memory"`;
+
+	const createTableQuery = `
+		CREATE TABLE IF NOT EXISTS ${qualifiedTableName} (
+			user_id VARCHAR(255) PRIMARY KEY,
+			working_memory JSONB NOT NULL,
 			created_at TIMESTAMPTZ DEFAULT NOW(),
 			updated_at TIMESTAMPTZ DEFAULT NOW()
 		)
@@ -96,78 +128,132 @@ async function ensureSessionsTableExists(
 
 	// Create index for faster queries
 	const createIndexQuery = `
-		CREATE INDEX IF NOT EXISTS idx_${tableName}_timestamp 
-		ON ${qualifiedTableName}(timestamp DESC)
+		CREATE INDEX IF NOT EXISTS idx_${tableName}_user_memory_updated 
+		ON ${qualifiedTableName}(updated_at DESC)
 	`;
 
 	await pool.query(createIndexQuery);
 }
 
-// Helper function to update session metadata
+// Initialize database tables and indexes
+async function initializeDatabaseStructures(
+	pool: pg.Pool,
+	schemaName: string,
+	sessionsTableName: string,
+): Promise<void> {
+	try {
+		await Promise.all([
+			createSessionsTable(pool, schemaName, sessionsTableName),
+			createUserMemoryTable(pool, schemaName, sessionsTableName),
+		]);
+	} catch (error) {
+		console.warn('Database initialization warning:', error);
+	}
+}
+
+// Set up initial working memory for new users
+async function setupUserWorkingMemory(
+	pool: pg.Pool,
+	schemaName: string,
+	tableName: string,
+	userId: string,
+	workingMemoryTemplate: string,
+): Promise<void> {
+	const qualifiedUserMemoryTable = schemaName ? `"${schemaName}"."${tableName}_user_memory"` : `"${tableName}_user_memory"`;
+
+	try {
+		// Parse the JSON template
+		const parsedTemplate = typeof workingMemoryTemplate === 'string'
+			? JSON.parse(workingMemoryTemplate)
+			: workingMemoryTemplate;
+
+		// Insert user memory if it doesn't exist (ON CONFLICT DO NOTHING)
+		const query = `
+			INSERT INTO ${qualifiedUserMemoryTable} (user_id, working_memory, created_at, updated_at)
+			VALUES ($1, $2::jsonb, NOW(), NOW())
+			ON CONFLICT (user_id) DO NOTHING
+		`;
+
+		await pool.query(query, [userId, JSON.stringify(parsedTemplate)]);
+	} catch (error) {
+		console.warn('Could not initialize user working memory:', error);
+	}
+}
+
+// Update session information and metadata
 async function updateSessionMetadata(
 	pool: pg.Pool,
 	schemaName: string,
 	tableName: string,
 	sessionId: string,
 	lastMessage: string,
+	userId?: string,
 	workingMemoryTemplate?: string,
+	workingMemoryScope?: 'thread' | 'user',
 ): Promise<void> {
 	const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}"` : `"${tableName}"`;
 
-	// Generate title from first 50 characters of the first message (if new session)
 	const title = lastMessage.substring(0, 50) + (lastMessage.length > 50 ? '...' : '');
 
-	// Initialize metadata with working memory template ONLY on new sessions
-	let metadata = {};
-	if (workingMemoryTemplate) {
+	let workingMemoryData = null;
+	if (workingMemoryTemplate && workingMemoryScope === 'thread') {
 		try {
-			// Parse the JSON template
-			const parsedTemplate = typeof workingMemoryTemplate === 'string'
+			workingMemoryData = typeof workingMemoryTemplate === 'string'
 				? JSON.parse(workingMemoryTemplate)
 				: workingMemoryTemplate;
-			metadata = { workingMemory: parsedTemplate };
 		} catch (error) {
-			// Fallback to empty object if template is invalid
 			console.warn('Invalid working memory template JSON, using empty object:', error);
-			metadata = { workingMemory: {} };
+			workingMemoryData = {};
 		}
 	}
 
-	// Optimized query: only update essential fields on conflict (skip metadata updates for performance)
 	const upsertQuery = `
-		INSERT INTO ${qualifiedTableName} (id, title, last_message, timestamp, message_count, metadata)
-		VALUES ($1, $2, $3, NOW(), 1, $4)
+		INSERT INTO ${qualifiedTableName} (id, user_id, title, last_message, timestamp, message_count, working_memory)
+		VALUES ($1, $2, $3, $4, NOW(), 1, $5)
 		ON CONFLICT (id) 
 		DO UPDATE SET 
+			user_id = EXCLUDED.user_id,
 			last_message = EXCLUDED.last_message,
 			timestamp = NOW(),
 			message_count = ${qualifiedTableName}.message_count + 1,
 			updated_at = NOW()
 	`;
 
-	await pool.query(upsertQuery, [sessionId, title, lastMessage, JSON.stringify(metadata)]);
+	await pool.query(upsertQuery, [sessionId, userId || null, title, lastMessage, JSON.stringify(workingMemoryData)]);
 }
 
-// Helper function to get working memory for a session
-// Optimized: Uses primary key index, extracts only needed JSON field
+// Retrieve working memory for a session or user
 async function getWorkingMemory(
 	pool: pg.Pool,
 	schemaName: string,
 	tableName: string,
 	sessionId: string,
+	scope: 'thread' | 'user' = 'thread',
+	userId?: string,
 ): Promise<any | null> {
-	const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}"` : `"${tableName}"`;
-
-	// Optimized query: Primary key lookup (fast), extracts workingMemory as JSON object
-	const query = `
-		SELECT metadata->'workingMemory' as working_memory
-		FROM ${qualifiedTableName}
-		WHERE id = $1
-		LIMIT 1
-	`;
-
-	const result = await pool.query(query, [sessionId]);
-	return result.rows[0]?.working_memory || null;
+	if (scope === 'user' && userId) {
+		// User-scoped: Get working memory from dedicated user memory table
+		const qualifiedUserMemoryTable = schemaName ? `"${schemaName}"."${tableName}_user_memory"` : `"${tableName}_user_memory"`;
+		const query = `
+			SELECT working_memory
+			FROM ${qualifiedUserMemoryTable}
+			WHERE user_id = $1
+			LIMIT 1
+		`;
+		const result = await pool.query(query, [userId]);
+		return result.rows[0]?.working_memory || null;
+	} else {
+		// Thread-scoped: Get working memory for specific session
+		const qualifiedTableName = schemaName ? `"${schemaName}"."${tableName}"` : `"${tableName}"`;
+		const query = `
+			SELECT working_memory
+			FROM ${qualifiedTableName}
+			WHERE id = $1
+			LIMIT 1
+		`;
+		const result = await pool.query(query, [sessionId]);
+		return result.rows[0]?.working_memory || null;
+	}
 }
 
 export class MemoryPostgresAdvanced implements INodeType {
@@ -228,6 +314,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 			sessionIdOption,
 			expressionSessionKeyProperty(1.2),
 			sessionKeyProperty,
+
 			{
 				displayName: 'Schema Name',
 				name: 'schemaName',
@@ -290,6 +377,19 @@ export class MemoryPostgresAdvanced implements INodeType {
 						},
 					},
 					{
+						displayName: 'User ID',
+						name: 'userId',
+						type: 'string',
+						default: '={{ $json.userId }}',
+						description: 'Optional user identifier for session tracking and working memory scoping. Leave empty if not needed.',
+						required: false,
+						displayOptions: {
+							show: {
+								enableSessionTracking: [true],
+							},
+						},
+					},
+					{
 						displayName: 'Top K Results',
 						name: 'topK',
 						type: 'number',
@@ -310,6 +410,30 @@ export class MemoryPostgresAdvanced implements INodeType {
 						displayOptions: {
 							show: {
 								enableSessionTracking: [true],
+							},
+						},
+					},
+					{
+						displayName: 'Working Memory Scope',
+						name: 'workingMemoryScope',
+						type: 'options',
+						options: [
+							{
+								name: 'Thread-Scoped',
+								value: 'thread',
+								description: 'Working memory is isolated per conversation thread',
+							},
+							{
+								name: 'User-Scoped',
+								value: 'user',
+								description: 'Working memory persists across all threads for the same user (requires User ID)',
+							},
+						],
+						default: 'thread',
+						description: 'Choose how working memory is scoped - per thread or per user',
+						displayOptions: {
+							show: {
+								enableWorkingMemory: [true],
 							},
 						},
 					},
@@ -386,18 +510,22 @@ export class MemoryPostgresAdvanced implements INodeType {
 		const options = this.getNodeParameter('options', itemIndex, {}) as {
 			enableSessionTracking?: boolean;
 			sessionsTableName?: string;
+			userId?: string;
 			enableSemanticSearch?: boolean;
 			topK?: number;
 			messageRange?: number;
 			enableWorkingMemory?: boolean;
+			workingMemoryScope?: 'thread' | 'user';
 			workingMemoryTemplate?: string;
 		};
 		const enableSessionTracking = options.enableSessionTracking || false;
 		const sessionsTableName = options.sessionsTableName || 'n8n_chat_sessions';
+		const userId = enableSessionTracking ? (options.userId || '') : '';
 		const enableSemanticSearch = options.enableSemanticSearch || false;
 		const topK = options.topK || 3;
 		const messageRange = options.messageRange || 2;
 		const enableWorkingMemory = options.enableWorkingMemory || false;
+		const workingMemoryScope = options.workingMemoryScope || 'thread';
 		const workingMemoryTemplate = options.workingMemoryTemplate || `{
   "name": "",
   "location": "",
@@ -462,9 +590,10 @@ export class MemoryPostgresAdvanced implements INodeType {
 		// Create sessions table if session tracking is enabled
 		if (enableSessionTracking) {
 			try {
-				await ensureSessionsTableExists(pool, schemaName, sessionsTableName);
+				await initializeDatabaseStructures(pool, schemaName, sessionsTableName);
+				this.logger.info('✅ Database structures initialized');
 			} catch (error) {
-				this.logger.warn(`Could not create sessions table: ${error.message}`);
+				this.logger.warn(`Could not create database structures: ${error.message}`);
 			}
 		}
 
@@ -488,26 +617,31 @@ export class MemoryPostgresAdvanced implements INodeType {
 				// Add the message to history
 				await originalAddMessage(message);
 
-				// Update session metadata (non-blocking - fire and forget)
-				// NOTE: This is purely for UI/tracking purposes (sessions list with titles, timestamps).
-				// It does NOT affect memory functionality. Disable "Session Tracking" if not needed.
+				// Update session information in background
 				if (enableSessionTracking) {
-					// Use setImmediate to defer execution and avoid any blocking
 					setImmediate(() => {
 						updateSessionMetadata(pool, schemaName, sessionsTableName, sessionId, messageContent,
-							enableWorkingMemory ? workingMemoryTemplate : undefined)
+							userId || undefined, enableWorkingMemory ? workingMemoryTemplate : undefined, workingMemoryScope)
 							.catch((error) => {
 								this.logger.warn(`Could not update session metadata: ${error.message}`);
 							});
 					});
+
+					// Set up working memory for new users
+					if (enableWorkingMemory && workingMemoryScope === 'user' && userId) {
+						setImmediate(() => {
+							setupUserWorkingMemory(pool, schemaName, sessionsTableName, userId, workingMemoryTemplate)
+								.catch((error) => {
+									this.logger.warn(`Could not set up user working memory: ${error.message}`);
+								});
+						});
+					}
 				}
 
-				// Store embedding in vector store (non-blocking - fire and forget)
+				// Store message embeddings for semantic search
 				if (enableSemanticSearch && vectorStore) {
 					(async () => {
 						try {
-							// Use the vector store's internal embedding model to store the message
-							// This allows the vector store to use its own connected embedding model
 							await vectorStore.addDocuments([{
 								pageContent: messageContent,
 								metadata: {
@@ -516,7 +650,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 									timestamp: new Date().toISOString(),
 								}
 							}]);
-							this.logger.info(`✅ Message embedded and stored in vector store using vector store's embedding model`);
+							this.logger.info(`✅ Message embedded and stored in vector store`);
 						} catch (error: any) {
 							this.logger.warn(`Could not store message embedding: ${error.message}`);
 						}
@@ -548,24 +682,22 @@ export class MemoryPostgresAdvanced implements INodeType {
 			memory.loadMemoryVariables = async (values: any) => {
 				this.logger.info(`loadMemoryVariables called with values: ${JSON.stringify(values)}`);
 
-				// ⚡ PERFORMANCE OPTIMIZATION: Load chat history and working memory in parallel
+				// Load chat history and working memory in parallel
 				const loadPromises: Promise<any>[] = [
-					originalLoadMemoryVariables(values), // Load chat history
+					originalLoadMemoryVariables(values),
 				];
 
-				// Add working memory fetch to parallel batch if enabled
 				if (enableWorkingMemory && enableSessionTracking) {
 					loadPromises.push(
-						getWorkingMemory(pool, schemaName, sessionsTableName, sessionId)
+						getWorkingMemory(pool, schemaName, sessionsTableName, sessionId, workingMemoryScope, userId || undefined)
 					);
 				}
 
-				// Execute all queries in parallel (huge performance boost!)
 				const results = await Promise.all(loadPromises);
 				const regularMemory = results[0];
 				const workingMemory = enableWorkingMemory && enableSessionTracking ? results[1] : null;
 
-				this.logger.info(`✅ Parallel load complete - Chat history and working memory loaded simultaneously`);
+				this.logger.info(`✅ Memory loaded successfully`);
 
 				// Inject working memory at the beginning (if enabled and session tracking is enabled)
 				if (enableWorkingMemory && enableSessionTracking && regularMemory.chat_history && Array.isArray(regularMemory.chat_history)) {
@@ -588,7 +720,11 @@ export class MemoryPostgresAdvanced implements INodeType {
 
 						// Create system message with working memory as structured JSON
 						// Note: Update instructions are provided by the Working Memory Tool node
-						const workingMemoryContent = `WORKING_MEMORY: Persistent user information across conversations.
+						const scopeDescription = workingMemoryScope === 'user'
+							? `across ALL conversations for user ${userId || 'current user'}`
+							: 'for this conversation thread';
+
+						const workingMemoryContent = `WORKING_MEMORY: Persistent user information ${scopeDescription}.
 
 Current Memory (JSON format):
 \`\`\`json

@@ -22,7 +22,7 @@ export const sessionIdOption: INodeProperties = {
 };
 
 export const expressionSessionKeyProperty = (fromVersion: number): INodeProperties => ({
-	displayName: 'Session Key From Previous Node',
+	displayName: 'Session ID',
 	name: 'sessionKey',
 	type: 'string',
 	default: '={{ $json.sessionId }}',
