@@ -38,23 +38,22 @@ interface PostgresNodeCredentials {
 }
 
 const INPUT_CONTENT_KEYS = ['input', 'question', 'query', 'prompt', 'message'];
-const ANSWER_CONTENT_KEYS = ['answer', 'output', 'response', 'finalAnswer', 'text', 'content'];
-const STRIP_OBJECT_KEYS = ['metadata', 'intermediateSteps', 'intermediate_steps', 'additional_kwargs', 'response_metadata'];
+const ANSWER_CONTENT_KEYS = ['answer', 'output', 'finalAnswer', 'text', 'content'];
 
 function normalizeContentToText(content: any): string {
 	if (typeof content === 'string') {
-		return content;
+		return content.trim();
 	}
 
 	if (Array.isArray(content)) {
 		return content
 			.map((part) => {
 				if (typeof part === 'string') {
-					return part;
+					return part.trim();
 				}
 
 				if (part && typeof part === 'object' && typeof part.text === 'string') {
-					return part.text;
+					return part.text.trim();
 				}
 
 				return '';
@@ -63,45 +62,29 @@ function normalizeContentToText(content: any): string {
 			.join('\n');
 	}
 
-	if (content && typeof content === 'object') {
-		for (const key of ANSWER_CONTENT_KEYS) {
-			const value = content[key];
-			if (typeof value === 'string' && value.trim()) {
-				return value;
-			}
-		}
-
-		for (const key of INPUT_CONTENT_KEYS) {
-			const value = content[key];
-			if (typeof value === 'string' && value.trim()) {
-				return value;
-			}
-		}
-
-		const cleanedObject = Object.fromEntries(
-			Object.entries(content).filter(([key]) => !STRIP_OBJECT_KEYS.includes(key)),
-		);
-
-		if (Object.keys(cleanedObject).length > 0) {
-			return JSON.stringify(cleanedObject);
-		}
-	}
-
-	return JSON.stringify(content);
+	return '';
 }
 
 function getSanitizedMessageContent(message: any): string {
 	const messageType = typeof message?._getType === 'function' ? message._getType() : '';
 	const content = message?.content;
+	const isHumanMessage = messageType === 'human';
+	const isAiMessage = messageType === 'ai';
+
+	if (!isHumanMessage && !isAiMessage) {
+		return '';
+	}
 
 	if (content && typeof content === 'object' && !Array.isArray(content)) {
-		const preferredKeys = messageType === 'human' ? INPUT_CONTENT_KEYS : ANSWER_CONTENT_KEYS;
+		const preferredKeys = isHumanMessage ? INPUT_CONTENT_KEYS : ANSWER_CONTENT_KEYS;
 		for (const key of preferredKeys) {
 			const value = content[key];
 			if (typeof value === 'string' && value.trim()) {
-				return value;
+				return value.trim();
 			}
 		}
+
+		return '';
 	}
 
 	return normalizeContentToText(content);
@@ -112,25 +95,43 @@ function sanitizeMessageForStorage(message: any, storeIntermediateStepsAndMetada
 		return message;
 	}
 
-	message.content = getSanitizedMessageContent(message);
+	const messageToStore = Object.assign(
+		Object.create(Object.getPrototypeOf(message)),
+		message,
+	);
 
-	if ('additional_kwargs' in message) {
-		message.additional_kwargs = {};
+	messageToStore.content = getSanitizedMessageContent(messageToStore);
+
+	if ('additional_kwargs' in messageToStore) {
+		messageToStore.additional_kwargs = {};
 	}
 
-	if ('response_metadata' in message) {
-		message.response_metadata = {};
+	if ('response_metadata' in messageToStore) {
+		messageToStore.response_metadata = {};
 	}
 
-	if ('tool_calls' in message) {
-		message.tool_calls = [];
+	if ('tool_calls' in messageToStore) {
+		messageToStore.tool_calls = [];
 	}
 
-	if ('invalid_tool_calls' in message) {
-		message.invalid_tool_calls = [];
+	if ('invalid_tool_calls' in messageToStore) {
+		messageToStore.invalid_tool_calls = [];
 	}
 
-	return message;
+	return messageToStore;
+}
+
+function shouldPersistSanitizedMessage(message: any, storeIntermediateStepsAndMetadata: boolean): boolean {
+	if (storeIntermediateStepsAndMetadata) {
+		return true;
+	}
+
+	const messageType = typeof message?._getType === 'function' ? message._getType() : '';
+	if (messageType !== 'human' && messageType !== 'ai') {
+		return false;
+	}
+
+	return typeof message?.content === 'string' && message.content.trim().length > 0;
 }
 
 // Helper function to configure Postgres pool
@@ -715,6 +716,12 @@ export class MemoryPostgresAdvanced implements INodeType {
 			const originalAddMessage = pgChatHistory.addMessage.bind(pgChatHistory);
 			pgChatHistory.addMessage = async (message: any) => {
 				const messageToStore = sanitizeMessageForStorage(message, storeIntermediateStepsAndMetadata);
+
+				if (!shouldPersistSanitizedMessage(messageToStore, storeIntermediateStepsAndMetadata)) {
+					this.logger.info('Skipping non-text/intermediate message from storage');
+					return;
+				}
+
 				const messageContent = typeof messageToStore.content === 'string'
 					? messageToStore.content
 					: JSON.stringify(messageToStore.content);
@@ -801,6 +808,16 @@ export class MemoryPostgresAdvanced implements INodeType {
 				const results = await Promise.all(loadPromises);
 				const regularMemory = results[0];
 				const workingMemory = enableWorkingMemory && enableSessionTracking ? results[1] : null;
+
+				if (
+					!storeIntermediateStepsAndMetadata &&
+					regularMemory.chat_history &&
+					Array.isArray(regularMemory.chat_history)
+				) {
+					regularMemory.chat_history = regularMemory.chat_history
+						.map((message: any) => sanitizeMessageForStorage(message, false))
+						.filter((message: any) => shouldPersistSanitizedMessage(message, false));
+				}
 
 				this.logger.info(`✅ Memory loaded successfully`);
 
