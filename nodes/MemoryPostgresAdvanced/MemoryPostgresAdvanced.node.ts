@@ -37,6 +37,102 @@ interface PostgresNodeCredentials {
 	sslRejection?: boolean;
 }
 
+const INPUT_CONTENT_KEYS = ['input', 'question', 'query', 'prompt', 'message'];
+const ANSWER_CONTENT_KEYS = ['answer', 'output', 'response', 'finalAnswer', 'text', 'content'];
+const STRIP_OBJECT_KEYS = ['metadata', 'intermediateSteps', 'intermediate_steps', 'additional_kwargs', 'response_metadata'];
+
+function normalizeContentToText(content: any): string {
+	if (typeof content === 'string') {
+		return content;
+	}
+
+	if (Array.isArray(content)) {
+		return content
+			.map((part) => {
+				if (typeof part === 'string') {
+					return part;
+				}
+
+				if (part && typeof part === 'object' && typeof part.text === 'string') {
+					return part.text;
+				}
+
+				return '';
+			})
+			.filter(Boolean)
+			.join('\n');
+	}
+
+	if (content && typeof content === 'object') {
+		for (const key of ANSWER_CONTENT_KEYS) {
+			const value = content[key];
+			if (typeof value === 'string' && value.trim()) {
+				return value;
+			}
+		}
+
+		for (const key of INPUT_CONTENT_KEYS) {
+			const value = content[key];
+			if (typeof value === 'string' && value.trim()) {
+				return value;
+			}
+		}
+
+		const cleanedObject = Object.fromEntries(
+			Object.entries(content).filter(([key]) => !STRIP_OBJECT_KEYS.includes(key)),
+		);
+
+		if (Object.keys(cleanedObject).length > 0) {
+			return JSON.stringify(cleanedObject);
+		}
+	}
+
+	return JSON.stringify(content);
+}
+
+function getSanitizedMessageContent(message: any): string {
+	const messageType = typeof message?._getType === 'function' ? message._getType() : '';
+	const content = message?.content;
+
+	if (content && typeof content === 'object' && !Array.isArray(content)) {
+		const preferredKeys = messageType === 'human' ? INPUT_CONTENT_KEYS : ANSWER_CONTENT_KEYS;
+		for (const key of preferredKeys) {
+			const value = content[key];
+			if (typeof value === 'string' && value.trim()) {
+				return value;
+			}
+		}
+	}
+
+	return normalizeContentToText(content);
+}
+
+function sanitizeMessageForStorage(message: any, storeIntermediateStepsAndMetadata: boolean): any {
+	if (storeIntermediateStepsAndMetadata) {
+		return message;
+	}
+
+	message.content = getSanitizedMessageContent(message);
+
+	if ('additional_kwargs' in message) {
+		message.additional_kwargs = {};
+	}
+
+	if ('response_metadata' in message) {
+		message.response_metadata = {};
+	}
+
+	if ('tool_calls' in message) {
+		message.tool_calls = [];
+	}
+
+	if ('invalid_tool_calls' in message) {
+		message.invalid_tool_calls = [];
+	}
+
+	return message;
+}
+
 // Helper function to configure Postgres pool
 async function configurePostgresPool(credentials: PostgresNodeCredentials): Promise<pg.Pool> {
 	const pg = await import('pg');
@@ -377,6 +473,13 @@ export class MemoryPostgresAdvanced implements INodeType {
 						},
 					},
 					{
+						displayName: 'Store Intermediate Steps and Metadata',
+						name: 'storeIntermediateStepsAndMetadata',
+						type: 'boolean',
+						default: false,
+						description: 'Whether to store full raw message payloads including intermediate steps and metadata. When off, only clean user input and agent answer text are stored.',
+					},
+					{
 						displayName: 'Top K Results',
 						name: 'topK',
 						type: 'number',
@@ -510,6 +613,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 			enableSessionTracking?: boolean;
 			sessionsTableName?: string;
 			userId?: string;
+			storeIntermediateStepsAndMetadata?: boolean;
 			enableSemanticSearch?: boolean;
 			topK?: number;
 			messageRange?: number;
@@ -520,6 +624,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 		const enableSessionTracking = options.enableSessionTracking || false;
 		const sessionsTableName = options.sessionsTableName || 'n8n_chat_sessions';
 		const userId = enableSessionTracking ? (options.userId || '') : '';
+		const storeIntermediateStepsAndMetadata = options.storeIntermediateStepsAndMetadata || false;
 		const enableSemanticSearch = options.enableSemanticSearch || false;
 		const topK = options.topK || 3;
 		const messageRange = options.messageRange || 2;
@@ -609,12 +714,13 @@ export class MemoryPostgresAdvanced implements INodeType {
 		if (enableSessionTracking || enableSemanticSearch) {
 			const originalAddMessage = pgChatHistory.addMessage.bind(pgChatHistory);
 			pgChatHistory.addMessage = async (message: any) => {
-				const messageContent = typeof message.content === 'string'
-					? message.content
-					: JSON.stringify(message.content);
+				const messageToStore = sanitizeMessageForStorage(message, storeIntermediateStepsAndMetadata);
+				const messageContent = typeof messageToStore.content === 'string'
+					? messageToStore.content
+					: JSON.stringify(messageToStore.content);
 
 				// Add the message to history
-				await originalAddMessage(message);
+				await originalAddMessage(messageToStore);
 
 				// Update session information in background
 				if (enableSessionTracking) {
@@ -645,7 +751,7 @@ export class MemoryPostgresAdvanced implements INodeType {
 								pageContent: messageContent,
 								metadata: {
 									sessionId,
-									messageType: message._getType(),
+									messageType: messageToStore._getType(),
 									timestamp: new Date().toISOString(),
 								}
 							}]);

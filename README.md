@@ -72,21 +72,22 @@ Store and retrieve chat history in a PostgreSQL database with advanced schema co
 
 #### Configuration Options
 
-| Option                      | Type    | Default                  | Description                                                                        |
-| --------------------------- | ------- | ------------------------ | ---------------------------------------------------------------------------------- |
-| **Schema Name**             | string  | `public`                 | PostgreSQL schema where the table is located                                       |
-| **Table Name**              | string  | `n8n_chat_histories`     | Name of the table to store chat history                                            |
-| **Session Key**             | string  | `={{ $json.sessionId }}` | Identifier for the chat session                                                    |
-| **Context Window Length**   | number  | `5`                      | Number of previous messages to retain (v1.1+)                                      |
-| **Enable Session Tracking** | boolean | `false`                  | Track sessions in separate table (UI only). Disable if not needed for performance. |
-| **Sessions Table Name**     | string  | `n8n_chat_sessions`      | Table name for session metadata (when tracking is enabled)                         |
-| **User ID**                 | string  | `={{ $json.userId }}`    | Optional user identifier for session tracking and working memory scoping           |
-| **Enable Working Memory**   | boolean | `false`                  | Enable persistent user information with extensible JSON schema                     |
-| **Working Memory Scope**    | options | `thread`                 | Choose between thread-scoped or user-scoped memory persistence                     |
-| **Working Memory Template** | JSON    | (user info template)     | JSON template for storing structured user data with extensible fields              |
-| **Enable Semantic Search**  | boolean | `false`                  | Enable RAG-based memory retrieval using embeddings                                 |
-| **Top K Results**           | number  | `3`                      | Number of semantically similar messages to retrieve                                |
-| **Message Range**           | number  | `2`                      | Context messages before/after each semantic match                                  |
+| Option                                    | Type    | Default                  | Description                                                                                                                                   |
+| ----------------------------------------- | ------- | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Schema Name**                           | string  | `public`                 | PostgreSQL schema where the table is located                                                                                                  |
+| **Table Name**                            | string  | `n8n_chat_histories`     | Name of the table to store chat history                                                                                                       |
+| **Session Key**                           | string  | `={{ $json.sessionId }}` | Identifier for the chat session                                                                                                               |
+| **Context Window Length**                 | number  | `5`                      | Number of previous messages to retain (v1.1+)                                                                                                 |
+| **Enable Session Tracking**               | boolean | `false`                  | Track sessions in separate table (UI only). Disable if not needed for performance.                                                            |
+| **Store Intermediate Steps and Metadata** | boolean | `false`                  | Store full raw agent payloads including intermediate/tool traces and metadata. When disabled, memory stores clean input and answer text only. |
+| **Sessions Table Name**                   | string  | `n8n_chat_sessions`      | Table name for session metadata (when tracking is enabled)                                                                                    |
+| **User ID**                               | string  | `={{ $json.userId }}`    | Optional user identifier for session tracking and working memory scoping                                                                      |
+| **Enable Working Memory**                 | boolean | `false`                  | Enable persistent user information with extensible JSON schema                                                                                |
+| **Working Memory Scope**                  | options | `thread`                 | Choose between thread-scoped or user-scoped memory persistence                                                                                |
+| **Working Memory Template**               | JSON    | (user info template)     | JSON template for storing structured user data with extensible fields                                                                         |
+| **Enable Semantic Search**                | boolean | `false`                  | Enable RAG-based memory retrieval using embeddings                                                                                            |
+| **Top K Results**                         | number  | `3`                      | Number of semantically similar messages to retrieve                                                                                           |
+| **Message Range**                         | number  | `2`                      | Context messages before/after each semantic match                                                                                             |
 
 ## Semantic Search
 
